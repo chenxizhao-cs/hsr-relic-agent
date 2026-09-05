@@ -1,0 +1,90 @@
+{
+  "source": "HSR-Scanner",
+  "build": "v1.2.0",
+  "version": 4,
+  "metadata": {
+    "uid": 0,
+    "trailblazer": "Stelle"
+  },
+  "gacha": {
+    "stellar_jade": 0,
+    "oneric_shards": 0
+  },
+  "materials": [],
+  "characters": [
+    {
+      "id": "1205",
+      "name": "Blade",
+      "path": "Destruction",
+      "level": 80,
+      "ascension": 0,
+      "eidolon": 0,
+      "ability_version": 0
+    }
+  ],
+  "light_cones": [
+    {
+      "id": "23009",
+      "name": "The Unreachable Side",
+      "level": 80,
+      "ascension": 0,
+      "superimposition": 1,
+      "location": "1205",
+      "lock": false,
+      "_uid": "8000001"
+    }
+  ],
+  "relics": [
+    {
+      "set_id": "113",
+      "name": "Longevous Disciple",
+      "slot": "Head",
+      "rarity": 5,
+      "level": 0,
+      "mainstat": "HP",
+      "substats": [
+        { "key": "HP_", "value": 4.32 },
+        { "key": "CRIT Rate_", "value": 3.24 },
+        { "key": "CRIT DMG_", "value": 6.48 }
+      ],
+      "location": "1205",
+      "lock": false,
+      "discard": false,
+      "_uid": "8100001"
+    },
+    {
+      "set_id": "113",
+      "name": "Longevous Disciple",
+      "slot": "Body",
+      "rarity": 5,
+      "level": 0,
+      "mainstat": "CRIT Rate",
+      "substats": [
+        { "key": "HP_", "value": 4.32 },
+        { "key": "CRIT DMG_", "value": 6.48 },
+        { "key": "SPD", "value": 2.6 }
+      ],
+      "location": "",
+      "lock": false,
+      "discard": false,
+      "_uid": "8100002"
+    },
+    {
+      "set_id": "306",
+      "name": "Inert Salsotto",
+      "slot": "Link Rope",
+      "rarity": 5,
+      "level": 0,
+      "mainstat": "HP",
+      "substats": [
+        { "key": "CRIT Rate_", "value": 3.24 },
+        { "key": "CRIT DMG_", "value": 6.48 },
+        { "key": "SPD", "value": 2.6 }
+      ],
+      "location": "",
+      "lock": false,
+      "discard": false,
+      "_uid": "8100003"
+    }
+  ]
+}

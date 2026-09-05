@@ -1,0 +1,12 @@
+{
+  "characterId": "1205",
+  "lightConeId": "23009",
+  "relics": [
+    { "id": "h1", "part": "Head", "set": "Longevous Disciple", "main": "HP", "substats": [["CRIT Rate", 6.4], ["CRIT DMG", 12.9], ["SPD", 5], ["HP%", 8.6]] },
+    { "id": "g1", "part": "Hands", "set": "Longevous Disciple", "main": "ATK", "substats": [["CRIT Rate", 5.8], ["CRIT DMG", 11.6], ["SPD", 4], ["HP%", 9.2]] },
+    { "id": "b1", "part": "Body", "set": "Longevous Disciple", "main": "CRIT Rate", "substats": [["CRIT DMG", 18.1], ["SPD", 4], ["HP%", 9.2], ["ATK%", 4.3]] },
+    { "id": "f1", "part": "Feet", "set": "Longevous Disciple", "main": "SPD", "substats": [["CRIT Rate", 5.8], ["CRIT DMG", 12.3], ["HP%", 8.6], ["ATK%", 4.3]] },
+    { "id": "p1", "part": "PlanarSphere", "set": "Inert Salsotto", "main": "Wind DMG Boost", "substats": [["CRIT Rate", 5.8], ["CRIT DMG", 12.3], ["SPD", 4], ["HP%", 8.6]] },
+    { "id": "l1", "part": "LinkRope", "set": "Inert Salsotto", "main": "HP%", "substats": [["CRIT Rate", 5.8], ["CRIT DMG", 12.3], ["SPD", 4], ["ATK%", 8.6]] }
+  ]
+}

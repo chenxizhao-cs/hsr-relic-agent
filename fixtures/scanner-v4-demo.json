@@ -1,0 +1,275 @@
+{
+  "source": "HSR-Scanner",
+  "build": "v1.2.0",
+  "version": 4,
+  "metadata": {
+    "uid": 0,
+    "trailblazer": "Stelle",
+    "current_trailblazer_path": "Destruction"
+  },
+  "gacha": {
+    "stellar_jade": 0,
+    "oneric_shards": 0
+  },
+  "materials": [],
+  "characters": [
+    {
+      "id": "1205",
+      "name": "Blade",
+      "path": "Destruction",
+      "level": 80,
+      "ascension": 0,
+      "eidolon": 0,
+      "ability_version": 0
+    },
+    {
+      "id": "1102",
+      "name": "Seele",
+      "path": "Hunt",
+      "level": 80,
+      "ascension": 0,
+      "eidolon": 0,
+      "ability_version": 0
+    }
+  ],
+  "light_cones": [
+    {
+      "id": "23009",
+      "name": "The Unreachable Side",
+      "level": 80,
+      "ascension": 0,
+      "superimposition": 1,
+      "location": "1205",
+      "lock": true,
+      "_uid": "9000001"
+    },
+    {
+      "id": "23001",
+      "name": "In the Night",
+      "level": 80,
+      "ascension": 0,
+      "superimposition": 1,
+      "location": "1102",
+      "lock": true,
+      "_uid": "9000002"
+    }
+  ],
+  "relics": [
+    {
+      "set_id": "113",
+      "name": "Longevous Disciple",
+      "slot": "Head",
+      "rarity": 5,
+      "level": 0,
+      "mainstat": "HP",
+      "substats": [
+        { "key": "HP_", "value": 4.32 },
+        { "key": "CRIT Rate_", "value": 3.24 },
+        { "key": "SPD", "value": 2.6 }
+      ],
+      "preview_substats": [
+        { "key": "CRIT DMG_", "value": 6.48, "step": 2 }
+      ],
+      "location": "",
+      "lock": false,
+      "discard": false,
+      "_uid": "9100001"
+    },
+    {
+      "set_id": "113",
+      "name": "Longevous Disciple",
+      "slot": "Hands",
+      "rarity": 5,
+      "level": 3,
+      "mainstat": "ATK",
+      "substats": [
+        { "key": "HP_", "value": 4.32 },
+        { "key": "CRIT Rate_", "value": 6.48 },
+        { "key": "CRIT DMG_", "value": 6.48 },
+        { "key": "SPD", "value": 2.6 }
+      ],
+      "location": "",
+      "lock": false,
+      "discard": false,
+      "_uid": "9100002"
+    },
+    {
+      "set_id": "113",
+      "name": "Longevous Disciple",
+      "slot": "Body",
+      "rarity": 5,
+      "level": 6,
+      "mainstat": "CRIT Rate",
+      "substats": [
+        { "key": "DEF_", "value": 10.8 },
+        { "key": "Effect RES_", "value": 8.64 },
+        { "key": "ATK", "value": 21.168754 },
+        { "key": "DEF", "value": 21.168754 }
+      ],
+      "location": "",
+      "lock": false,
+      "discard": false,
+      "_uid": "9100003"
+    },
+    {
+      "set_id": "113",
+      "name": "Longevous Disciple",
+      "slot": "Feet",
+      "rarity": 5,
+      "level": 0,
+      "mainstat": "SPD",
+      "substats": [
+        { "key": "HP_", "value": 4.32 },
+        { "key": "CRIT Rate_", "value": 3.24 },
+        { "key": "CRIT DMG_", "value": 6.48 }
+      ],
+      "location": "",
+      "lock": false,
+      "discard": false,
+      "_uid": "9100004"
+    },
+    {
+      "set_id": "306",
+      "name": "Inert Salsotto",
+      "slot": "Planar Sphere",
+      "rarity": 5,
+      "level": 9,
+      "mainstat": "Wind DMG Boost",
+      "substats": [
+        { "key": "HP_", "value": 8.64 },
+        { "key": "CRIT Rate_", "value": 6.48 },
+        { "key": "CRIT DMG_", "value": 12.96 },
+        { "key": "SPD", "value": 2.6 }
+      ],
+      "location": "1205",
+      "lock": true,
+      "discard": false,
+      "_uid": "9100005"
+    },
+    {
+      "set_id": "306",
+      "name": "Inert Salsotto",
+      "slot": "Link Rope",
+      "rarity": 5,
+      "level": 12,
+      "mainstat": "HP",
+      "substats": [
+        { "key": "ATK_", "value": 4.32 },
+        { "key": "CRIT Rate_", "value": 6.48 },
+        { "key": "CRIT DMG_", "value": 19.44 },
+        { "key": "SPD", "value": 5.2 }
+      ],
+      "location": "1205",
+      "lock": true,
+      "discard": false,
+      "_uid": "9100006"
+    },
+    {
+      "set_id": "108",
+      "name": "Genius of Brilliant Stars",
+      "slot": "Head",
+      "rarity": 5,
+      "level": 0,
+      "mainstat": "HP",
+      "substats": [
+        { "key": "ATK_", "value": 4.32 },
+        { "key": "CRIT Rate_", "value": 3.24 },
+        { "key": "CRIT DMG_", "value": 6.48 },
+        { "key": "SPD", "value": 2.6 }
+      ],
+      "location": "",
+      "lock": false,
+      "discard": false,
+      "_uid": "9200001"
+    },
+    {
+      "set_id": "108",
+      "name": "Genius of Brilliant Stars",
+      "slot": "Hands",
+      "rarity": 5,
+      "level": 3,
+      "mainstat": "ATK",
+      "substats": [
+        { "key": "ATK_", "value": 4.32 },
+        { "key": "CRIT Rate_", "value": 6.48 },
+        { "key": "CRIT DMG_", "value": 6.48 },
+        { "key": "SPD", "value": 2.6 }
+      ],
+      "location": "",
+      "lock": false,
+      "discard": false,
+      "_uid": "9200002"
+    },
+    {
+      "set_id": "108",
+      "name": "Genius of Brilliant Stars",
+      "slot": "Body",
+      "rarity": 5,
+      "level": 6,
+      "mainstat": "CRIT Rate",
+      "substats": [
+        { "key": "HP_", "value": 8.64 },
+        { "key": "DEF_", "value": 10.8 },
+        { "key": "Effect RES_", "value": 4.32 },
+        { "key": "HP", "value": 42.33751 }
+      ],
+      "location": "",
+      "lock": false,
+      "discard": false,
+      "_uid": "9200003"
+    },
+    {
+      "set_id": "108",
+      "name": "Genius of Brilliant Stars",
+      "slot": "Feet",
+      "rarity": 5,
+      "level": 0,
+      "mainstat": "SPD",
+      "substats": [
+        { "key": "ATK_", "value": 4.32 },
+        { "key": "CRIT Rate_", "value": 3.24 },
+        { "key": "CRIT DMG_", "value": 6.48 }
+      ],
+      "location": "",
+      "lock": false,
+      "discard": false,
+      "_uid": "9200004"
+    },
+    {
+      "set_id": "309",
+      "name": "Rutilant Arena",
+      "slot": "Planar Sphere",
+      "rarity": 5,
+      "level": 9,
+      "mainstat": "Quantum DMG Boost",
+      "substats": [
+        { "key": "ATK_", "value": 8.64 },
+        { "key": "CRIT Rate_", "value": 6.48 },
+        { "key": "CRIT DMG_", "value": 12.96 },
+        { "key": "SPD", "value": 2.6 }
+      ],
+      "location": "1102",
+      "lock": true,
+      "discard": false,
+      "_uid": "9200005"
+    },
+    {
+      "set_id": "309",
+      "name": "Rutilant Arena",
+      "slot": "Link Rope",
+      "rarity": 5,
+      "level": 12,
+      "mainstat": "ATK",
+      "substats": [
+        { "key": "HP_", "value": 4.32 },
+        { "key": "CRIT Rate_", "value": 6.48 },
+        { "key": "CRIT DMG_", "value": 19.44 },
+        { "key": "SPD", "value": 5.2 }
+      ],
+      "location": "1102",
+      "lock": true,
+      "discard": false,
+      "_uid": "9200006"
+    }
+  ]
+}
