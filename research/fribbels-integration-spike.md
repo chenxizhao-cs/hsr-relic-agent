@@ -1,5 +1,7 @@
 # Fribbels (`hsr-optimizer`) 独立工具调用 Spike
 
+> v0.2 实现补充：以下历史实验仅证明接口可调用。核对同一 SHA 的角色源码发现，fixture 的旧版 `1205 / 1102` 只定义 BASIC（100% ATK）与 BREAK，不能代表完整角色战斗机制；`generateContext` 此路径也直接使用满级基础属性。当前实现没有切换到 `b1`，明确标注简化普攻、限制 80 级并披露满行迹假设。可复现的正式 Adapter 及边界见 [Adapter 文档](../adapters/fribbels/README.md)，原实验记录保留不变。
+
 ## 结论
 
 在当前固定版本上，Fribbels 的**评分与单 Build 模拟能力可以被薄 Node/TypeScript Adapter 包装成 Rust Agent 的独立子进程 Tool**；完整 `Optimizer` 门面则不能直接作为无 UI library 调用。

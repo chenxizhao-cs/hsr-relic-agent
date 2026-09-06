@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Stat {
     Hp,
     Atk,
@@ -45,7 +47,8 @@ impl Stat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Slot {
     Head,
     Hands,
@@ -55,7 +58,7 @@ pub enum Slot {
     Rope,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LightCone {
     pub id: String,
     pub level: u8,
@@ -136,6 +139,7 @@ pub struct UpgradeRecommendation {
     pub projected_score: f64,
     pub baseline_score: f64,
     pub priority: f64,
+    pub details: Option<crate::EvaluationDetails>,
     pub reason: String,
 }
 
@@ -143,5 +147,7 @@ pub struct UpgradeRecommendation {
 pub struct UpgradeOutcome {
     pub decision: UpgradeDecision,
     pub reason: String,
+    /// Metrics for the just-upgraded relic, even when next selects a different one.
+    pub details: Option<crate::EvaluationDetails>,
     pub next: Option<UpgradeRecommendation>,
 }

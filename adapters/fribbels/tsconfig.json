@@ -1,0 +1,13 @@
+{
+  "extends": "../../upstream/hsr-optimizer/tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "types": ["node", "@webgpu/types", "vite/client"],
+    "typeRoots": [
+      "../../upstream/hsr-optimizer/node_modules/@types",
+      "../../upstream/hsr-optimizer/node_modules"
+    ]
+  },
+  "include": ["adapter.ts", "../../upstream/hsr-optimizer/src/types/window.ts"],
+  "exclude": ["dist"]
+}

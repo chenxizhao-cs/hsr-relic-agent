@@ -14,6 +14,44 @@ pub trait Evaluator {
         goal: &CultivationGoal,
         relic: &Relic,
     ) -> Result<Evaluation>;
+
+    fn name(&self) -> &'static str {
+        "Mock"
+    }
+
+    /// Threshold in the evaluator's score units, not a game-derived optimum.
+    fn minimum_potential(&self) -> f64 {
+        4.0
+    }
+
+    fn details(
+        &self,
+        _account: &AccountState,
+        _goal: &CultivationGoal,
+        _relic: &Relic,
+    ) -> Result<Option<crate::EvaluationDetails>> {
+        Ok(None)
+    }
+}
+
+impl<T: Evaluator + ?Sized> Evaluator for Box<T> {
+    fn evaluate(&self, a: &AccountState, g: &CultivationGoal, r: &Relic) -> Result<Evaluation> {
+        (**self).evaluate(a, g, r)
+    }
+    fn name(&self) -> &'static str {
+        (**self).name()
+    }
+    fn minimum_potential(&self) -> f64 {
+        (**self).minimum_potential()
+    }
+    fn details(
+        &self,
+        a: &AccountState,
+        g: &CultivationGoal,
+        r: &Relic,
+    ) -> Result<Option<crate::EvaluationDetails>> {
+        (**self).details(a, g, r)
+    }
 }
 
 /// Deliberately small heuristic, not Fribbels scoring, a probability model, or DPS.

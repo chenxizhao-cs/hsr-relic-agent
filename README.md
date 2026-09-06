@@ -13,7 +13,7 @@
 
 ## 当前状态
 
-项目目前已实现 **Demo v0.1.1：Rust + MockEvaluator 的最小强化决策闭环**。
+项目目前已实现 **Demo v0.2：Rust + Fribbels Evaluator 的强化决策闭环**，保留 v0.1 MockEvaluator 作对照。
 
 已经完成：
 
@@ -24,15 +24,21 @@
 - 强化决策 Demo 数据准备；
 - 独立 Rust library、CLI 演示与核心逻辑测试。
 - 可供 CLI 和未来 GUI 复用的结构化遗器不可操作原因。
+- 真实遗器评分、满级潜力、六件参考 Build 面板与简化普攻指标；Rust 负责最终排序和决策。
 
-目前不接 LLM / Fribbels / 真实账号采集，评分和预算仅为可解释的演示规则，不代表真实战斗收益。
+目前不接 LLM / 真实账号采集。评分和潜力来自固定 Fribbels 源码，预算与决策仍为演示启发式。**fixture 对应的旧版 Blade / Seele 在当前上游只有简化普通攻击实现，不能把该伤害指标当作完整实战收益。**
 
 ```bash
+node adapters/fribbels/build.mjs
 cd hsr-relic-agent
 cargo test
+cargo test --features fribbels-integration
 cargo run
 cargo run -- --interactive
+cargo run -- --mock
 ```
+
+首次缺少上游依赖时先运行 `npm ci --prefix upstream/hsr-optimizer`。默认模式不会在 Adapter 失败时悄悄退回 Mock。构建、协议与限制见 [Adapter 说明](adapters/fribbels/README.md)。
 
 操作方法、模块和规则见 [`hsr-relic-agent/README.md`](./hsr-relic-agent/README.md)。
 
@@ -55,7 +61,7 @@ Rust core：AccountState → 候选排序 → 推荐遗器
 边界原则：
 
 - core 使用自己的内部模型和结构化结果，可脱离界面独立调用和测试。
-- 数值评价通过 `Evaluator` 抽象调用；v0.1 使用 MockEvaluator，Fribbels 后续通过 Adapter / Tool 接入。
+- 数值评价通过 `Evaluator` 抽象调用；v0.2 的 FribbelsEvaluator 经独立 Node Adapter 接入，MockEvaluator 保留为显式对照。
 - Reliquary / HSR-Scanner 等外部数据通过导入边界转换为 `AccountState`，业务层不直接依赖第三方 schema 或网页状态。
 - 后续 LLM 理解已指定角色的培养约束、编排工具并解释结果；确定性计算和状态更新由 Rust core 及其工具完成。
 - 当前仅明确复用与解耦原则，具体 GUI 技术栈、HTTP API 和新增目录结构待实际需要时确定。
@@ -70,6 +76,7 @@ hsr-relic-agent-workspace/
 ├── DESIGN.md
 ├── README.md
 ├── hsr-relic-agent/       # 独立 Rust package：library + CLI + tests
+├── adapters/fribbels/    # 我们的 JSON ↔ Fribbels 薄 Adapter
 │
 ├── fixtures/
 │   ├── README.md
@@ -125,7 +132,7 @@ Blade / Seele 用于验证不同用户指定目标会改变候选排序，不代
 
 | 项目 | 在本项目中的定位 |
 |---|---|
-| Fribbels HSR Optimizer | 后续通过 Evaluator Adapter 提供遗器评分、潜力和目标角色 Build 评价 |
+| Fribbels HSR Optimizer | 已通过 Evaluator Adapter 提供遗器评分、潜力、参考 Build 面板及有限的伤害指标 |
 | Reliquary Archiver | 真实账号数据导入候选 |
 | HSR-Scanner | v4 JSON 数据格式及备用数据导入 |
 | HSR_Nous | 保留已有调研作参考，当前无集成计划 |
@@ -140,7 +147,7 @@ Fribbels 集成实验见：
 
 ## 下一步
 
-Demo v0.1.1 已使用 Mock 数据和抽象 Evaluator 实现：
+Demo v0.2 已在同一模拟账号上接入真实 Evaluator，保持：
 
 ```text
 加载账号
@@ -154,7 +161,7 @@ Demo v0.1.1 已使用 Mock 数据和抽象 Evaluator 实现：
 
 后续迭代保持单目标角色范围：
 
-1. v0.2：接入 Fribbels Evaluator、完善账号导入，逐步引入目标角色的 Build 收益与真实资源成本，并重新校准决策规则。
+1. 评价迭代：优先明确角色技能版本与完整参考配装，验证更有代表性的单角色伤害指标，再校准当前启发式；真实资源成本与更广泛导入仍待后续。
 2. v0.3：接入该角色强化任务的 LLM 交互与工具编排，完善历史、配置、进度/打断及 Token/费用管理等课程要求。
 3. 后续按需增加复用 core 的 Web/API/GUI 交互层。
 

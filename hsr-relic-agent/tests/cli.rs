@@ -2,8 +2,9 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 #[test]
-fn default_demo_completes_and_shows_all_decisions() {
+fn mock_demo_completes_and_shows_all_decisions() {
     let output = Command::new(env!("CARGO_BIN_EXE_hsr-relic-agent"))
+        .arg("--mock")
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -26,6 +27,7 @@ fn default_demo_completes_and_shows_all_decisions() {
 fn interactive_loop_accepts_results_and_recovers_from_bad_input() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_hsr-relic-agent"))
         .arg("--interactive")
+        .arg("--mock")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

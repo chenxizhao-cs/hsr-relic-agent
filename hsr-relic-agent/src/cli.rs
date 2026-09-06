@@ -1,11 +1,12 @@
 use std::io::{self, Write};
 
 use hsr_relic_agent::{
-    DEMO_ACCOUNT, DecisionEngine, Error, MockEvaluator, RelicOperationError, RelicSelection, Stat,
+    DEMO_ACCOUNT, DecisionEngine, Error, EvaluationProgress, Evaluator, FribbelsConfig,
+    FribbelsEvaluator, MockEvaluator, RelicOperationError, RelicSelection, Stat,
     UpgradeRecommendation, UpgradeResult, load_scanner_v4,
 };
 
-type Engine = DecisionEngine<MockEvaluator>;
+type Engine = DecisionEngine<Box<dyn Evaluator>>;
 type CliResult<T> = std::result::Result<T, CliError>;
 
 #[derive(Debug)]
@@ -97,7 +98,7 @@ fn operation_message(error: &RelicOperationError) -> String {
             "这件遗器已有四条副属性，本次强化只能增加其中一条已有副属性。".into()
         }
         RelicOperationError::InvalidSubstatCount { count } => {
-            format!("这件遗器当前有 {count} 条副属性，状态不符合 v0.1.1 的强化规则。")
+            format!("这件遗器当前有 {count} 条副属性，状态不符合当前 Demo 的强化规则。")
         }
         RelicOperationError::StatOverflow { stat } => {
             format!("{stat:?} 的结果超出可表示范围，账号状态未更新。")
@@ -112,17 +113,36 @@ pub(crate) fn run() -> CliResult<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!(
-            "cargo run：自动演示；cargo run -- --interactive：交互操作。\n每次启动从同一 fixture 加载，内存状态不写回文件。"
+            "cargo run：Fribbels 自动演示；--interactive：交互操作；--mock：使用 v0.1 Mock 对照。\n先在 workspace 根目录执行 node adapters/fribbels/build.mjs。\n每次启动从同一 fixture 加载，内存状态不写回文件；Ctrl+C 中断。"
         );
         return Ok(());
     }
-    let interactive = match args.as_slice() {
-        [] => false,
-        [arg] if arg == "--interactive" => true,
-        _ => return Err(Error("仅支持 --interactive / --help".into()).into()),
+    if args
+        .iter()
+        .any(|arg| !["--interactive", "--mock"].contains(&arg.as_str()))
+    {
+        return Err(Error("仅支持 --interactive / --mock / --help".into()).into());
+    }
+    let interactive = args.iter().any(|a| a == "--interactive");
+    let evaluator: Box<dyn Evaluator> = if args.iter().any(|a| a == "--mock") {
+        println!("HSR 遗器强化 Demo v0.2 — Mock 对照，不代表真实战斗收益");
+        Box::new(MockEvaluator)
+    } else {
+        println!("HSR 遗器强化 Demo v0.2 — Fribbels 真实评分 / 潜力 / 单角色 Build");
+        println!(
+            "伤害口径：无队友、95 级单体、有属性弱点且未击破，上游默认光锥/套装开关、满行迹。当前旧版 Blade/Seele 仅有简化普通攻击（100% ATK），不含 Blade 强化普攻/完整技能，非实战 DPS。预算/决策阈值仍为 Demo 规则。"
+        );
+        let config = FribbelsConfig {
+            progress: Some(std::sync::Arc::new(|event| {
+                if let EvaluationProgress::Waiting { seconds } = event {
+                    eprintln!("Fribbels 正在计算（{seconds} 秒），Ctrl+C 可中断……");
+                }
+            })),
+            ..FribbelsConfig::default()
+        };
+        Box::new(FribbelsEvaluator::new(config))
     };
-    let mut engine = Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, MockEvaluator);
-    println!("HSR 遗器强化 Demo v0.1.1 — Mock 评分，不代表真实战斗收益");
+    let mut engine = Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, evaluator);
     println!(
         "已加载 fixtures/scanner-v4-demo.json：{} 个角色 / {} 件遗器，预算 {} 步（一次 +3 消耗一步）。",
         engine.account().characters.len(),
@@ -139,6 +159,30 @@ pub(crate) fn run() -> CliResult<()> {
 fn show_recommendation(recommendation: Option<&UpgradeRecommendation>) {
     if let Some(r) = recommendation {
         println!("推荐 {}：{}", r.relic_id, r.reason);
+        if let Some(d) = &r.details {
+            let p = &d.candidate_build.panel;
+            println!(
+                "  遗器原始评分 {:.2}（{}）；满级潜力 worst / average / best：{:.2} / {:.2} / {:.2}",
+                d.relic.raw_current_score,
+                d.relic.rating,
+                d.relic.worst,
+                d.relic.average,
+                d.relic.best
+            );
+            println!(
+                "  候选替换后的基础面板：HP {:.0} / ATK {:.0} / DEF {:.0} / SPD {:.2} / 暴击 {:.2}% / 暴伤 {:.2}%",
+                p.hp, p.atk, p.def, p.speed, p.crit_rate_pct, p.crit_damage_pct
+            );
+            println!(
+                "  当前等级简化普攻伤害：候选 {:.2} / 参考 {:.2}（不是满级伤害预测，也不是完整角色伤害）",
+                d.candidate_build.basic_damage, d.reference_build.basic_damage
+            );
+            println!(
+                "  参考六件：{}；未装备部位按库存 ID 补齐 {:?}，仅作比较假设，未修改账号配装。",
+                d.reference.relic_ids.join(", "),
+                d.reference.assumed_slots
+            );
+        }
     } else {
         println!("暂无可自动推荐的候选：可能预算耗尽、已暂缓/停止，或无正向收益。");
     }
@@ -172,7 +216,7 @@ fn set_target(engine: &mut Engine, target: &str) -> CliResult<()> {
 
 fn show_ranking(engine: &Engine) -> CliResult<()> {
     let ranked = engine.rank_candidates()?;
-    println!("候选排序（Mock 单位步数收益）：");
+    println!("候选排序（评分潜力 / 剩余步数，真实模式另计 Build 伤害比）：");
     for (i, r) in ranked.iter().enumerate() {
         println!(
             "  {}. {} +{}，优先级 {:.2}，当前 {:.2} / 预计 {:.2}",
@@ -210,6 +254,16 @@ fn observe(engine: &mut Engine, stat: Stat, increase: f64) -> CliResult<()> {
         engine.account().upgrade_steps
     );
     println!("判断 {:?}：{}", out.decision, out.reason);
+    if let Some(d) = &out.details {
+        println!(
+            "本件更新后：当前分 {:.2} / 平均潜力 {:.2}，基础 HP {:.0} / ATK {:.0}，简化普攻 {:.2}。",
+            d.relic.current,
+            d.relic.average,
+            d.candidate_build.panel.hp,
+            d.candidate_build.panel.atk,
+            d.candidate_build.basic_damage
+        );
+    }
     show_recommendation(out.next.as_ref());
     show_selected(engine);
     Ok(())
@@ -240,7 +294,8 @@ fn demo(engine: &mut Engine) -> CliResult<()> {
     println!("\n自动脚本：先比较目标，再录入固定的模拟观察；未使用 fixture 的 preview_substats。");
     set_target(engine, "Seele")?;
     set_target(engine, "Blade")?;
-    println!("\n[1] 给推荐的遗器录入一次暴击率增加：");
+    println!("\n[1] 选择手部候选 9100002，录入一次暴击率增加：");
+    engine.select_relic("9100002")?;
     observe(engine, Stat::CritRate, 3.24)?;
     println!("\n[2] 手动观察三词条候选 9100001，录入新增防御百分比：");
     engine.select_relic("9100001")?;
@@ -250,6 +305,7 @@ fn demo(engine: &mut Engine) -> CliResult<()> {
     observe(engine, Stat::DefPercent, 5.4)?;
     println!("\n[4] Stop 后已有其他推荐；切换培养目标继续观察：");
     set_target(engine, "Seele")?;
+    engine.select_relic("9200002")?;
     observe(engine, Stat::CritRate, 3.24)?;
     show_history(engine);
     println!("\n演示结束。手动操作：cargo run -- --interactive；不修改原始 fixture。");

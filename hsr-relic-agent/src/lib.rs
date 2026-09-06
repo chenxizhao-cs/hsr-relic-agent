@@ -1,11 +1,16 @@
-//! Demo v0.1.1: scanner input is converted at the boundary; decisions use our own models.
+//! Demo v0.2: scanner and evaluator protocols stay outside decision logic.
 pub mod decision;
 pub mod evaluator;
+pub mod fribbels;
 pub mod import;
 pub mod model;
 
 pub use decision::{DecisionEngine, RelicOperationError, RelicOperationResult, RelicSelection};
 pub use evaluator::{Evaluation, Evaluator, MockEvaluator};
+pub use fribbels::{
+    BuildMetrics, BuildPanel, CombatConditions, DamageModel, EvaluationDetails, EvaluationProgress,
+    FRIBBELS_COMMIT, FribbelsConfig, FribbelsEvaluator, ReferenceBuild, RelicMetrics,
+};
 pub use import::load_scanner_v4;
 pub use model::*;
 

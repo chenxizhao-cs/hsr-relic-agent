@@ -207,6 +207,7 @@ impl<E: Evaluator> DecisionEngine<E> {
         relic: &Relic,
     ) -> Result<UpgradeRecommendation> {
         let evaluation = self.evaluate(account, goal, relic)?;
+        let details = self.evaluator.details(account, goal, relic)?;
         let mut baseline: f64 = 0.0;
         for equipped in account
             .relics
@@ -215,18 +216,39 @@ impl<E: Evaluator> DecisionEngine<E> {
         {
             baseline = baseline.max(self.evaluate(account, goal, equipped)?.current_score);
         }
+        if let Some(metrics) = &details {
+            baseline = metrics.baseline_slot_score;
+        }
         let remaining = f64::from((15 - relic.level) / 3);
-        let priority = (evaluation.projected_score - baseline).max(0.0) / remaining;
+        let damage_ratio = details
+            .as_ref()
+            .map_or(1.0, EvaluationDetails::damage_ratio);
+        if !baseline.is_finite()
+            || baseline < 0.0
+            || !damage_ratio.is_finite()
+            || damage_ratio < 0.0
+        {
+            return Err(Error("Evaluator 返回无效 Build 比较指标".into()));
+        }
+        let priority = (evaluation.projected_score - baseline).max(0.0) / remaining * damage_ratio;
+        let reason = format!(
+            "{} 当前 {:.2}，预计满级 {:.2}，同部位参考基线 {:.2}；正收益 / 剩余 {:.0} 步 × Build 伤害比 {:.3} = {:.2}",
+            self.evaluator.name(),
+            evaluation.current_score,
+            evaluation.projected_score,
+            baseline,
+            remaining,
+            damage_ratio,
+            priority
+        );
         Ok(UpgradeRecommendation {
             relic_id: relic.id.clone(),
             current_score: evaluation.current_score,
             projected_score: evaluation.projected_score,
             baseline_score: baseline,
             priority,
-            reason: format!(
-                "Mock 当前 {:.2}，预计满级 {:.2}，已装备同部位基线 {:.2}；正收益 / 剩余 {:.0} 步 = {:.2}",
-                evaluation.current_score, evaluation.projected_score, baseline, remaining, priority
-            ),
+            details,
+            reason,
         })
     }
 
@@ -250,7 +272,9 @@ impl<E: Evaluator> DecisionEngine<E> {
                 continue;
             }
             let candidate = self.recommendation(account, goal, relic)?;
-            if candidate.projected_score >= 4.0 && candidate.priority > 0.0 {
+            if candidate.projected_score >= self.evaluator.minimum_potential()
+                && candidate.priority > 0.0
+            {
                 candidates.push(candidate);
             }
         }
@@ -397,12 +421,14 @@ impl<E: Evaluator> DecisionEngine<E> {
                 UpgradeDecision::Hold,
                 "已满级，保留遗器，停止追加投入".into(),
             )
-        } else if evaluation.projected_score < 4.0 {
+        } else if evaluation.projected_score < self.evaluator.minimum_potential() {
             (
                 UpgradeDecision::Stop,
                 format!(
-                    "预计满级分 {:.2} 低于阈值 4；对当前目标停止投入",
-                    evaluation.projected_score
+                    "预计满级分 {:.2} 低于 {} 演示阈值 {}；对当前目标停止投入",
+                    evaluation.projected_score,
+                    self.evaluator.name(),
+                    self.evaluator.minimum_potential()
                 ),
             )
         } else if misses >= 2 {
@@ -418,7 +444,10 @@ impl<E: Evaluator> DecisionEngine<E> {
         } else if !useful {
             (
                 UpgradeDecision::Hold,
-                "本次 Mock 评分未增加，暂停投入；可显式 choose 恢复观察".into(),
+                format!(
+                    "本次 {} 评分未增加，暂停投入；可显式 choose 恢复观察",
+                    self.evaluator.name()
+                ),
             )
         } else {
             let current = self.recommendation(&staged, &goal, &after)?;
@@ -446,7 +475,8 @@ impl<E: Evaluator> DecisionEngine<E> {
                 (
                     UpgradeDecision::Continue,
                     format!(
-                        "本次 Mock 分增加 {:.2}，仍有预算与正向替换收益，继续观察",
+                        "本次 {} 分增加 {:.2}，仍有预算与正向替换收益，继续观察",
+                        self.evaluator.name(),
                         evaluation.current_score - old_score
                     ),
                 )
@@ -469,11 +499,13 @@ impl<E: Evaluator> DecisionEngine<E> {
         } else {
             self.rank_account(&staged, &goal)?.into_iter().next()
         };
+        let details = self.evaluator.details(&staged, &goal, &after)?;
         self.selected = next.as_ref().map(|r| r.relic_id.clone());
         self.account = staged;
         Ok(UpgradeOutcome {
             decision,
             reason,
+            details,
             next,
         })
     }
