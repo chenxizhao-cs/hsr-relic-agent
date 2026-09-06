@@ -1,10 +1,10 @@
-//! Demo v0.1: scanner input is converted at the boundary; decisions use our own models.
+//! Demo v0.1.1: scanner input is converted at the boundary; decisions use our own models.
 pub mod decision;
 pub mod evaluator;
 pub mod import;
 pub mod model;
 
-pub use decision::DecisionEngine;
+pub use decision::{DecisionEngine, RelicOperationError, RelicOperationResult, RelicSelection};
 pub use evaluator::{Evaluation, Evaluator, MockEvaluator};
 pub use import::load_scanner_v4;
 pub use model::*;

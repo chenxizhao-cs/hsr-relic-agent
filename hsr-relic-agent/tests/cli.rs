@@ -30,7 +30,7 @@ fn interactive_loop_accepts_results_and_recovers_from_bad_input() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"target Blade\nupgrade cr -1\nupgrade cr 3.24\nchoose 9100001\nupgrade def_pct 5.4\nchoose 9100001\nupgrade def_pct 5.4\nchoose 9100001\ntarget Seele\nupgrade cr 3.24\nhistory\nquit\n").unwrap();
+    child.stdin.take().unwrap().write_all(b"target Blade\nchoose missing\nchoose 9100005\nupgrade cr -1\nupgrade cr 3.24\nchoose 9100001\nupgrade def_pct 5.4\nchoose 9100001\nupgrade def_pct 5.4\nchoose 9100001\ntarget Seele\nupgrade cr 3.24\nhistory\nquit\n").unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
@@ -38,8 +38,11 @@ fn interactive_loop_accepts_results_and_recovers_from_bad_input() {
         "判断 Continue",
         "判断 Hold",
         "判断 Stop",
-        "未执行：副属性及增量无效",
-        "未执行：这件遗器已对当前目标 Stop",
+        "未执行：找不到遗器 missing，请检查 ID。",
+        "未执行：遗器 9100005 已锁定，解除锁定后才能选择或强化。",
+        "未执行：强化增量必须是大于 0 的有限数值。",
+        "遗器 9100001 此前处于 Hold；已按显式 choose 恢复。",
+        "未执行：遗器 9100001 对当前目标 1205 已判定为 Stop，请选择其他候选。",
         "强化历史（4 条，剩余 4 步）",
         "已退出",
     ] {

@@ -1,5 +1,84 @@
 use crate::*;
 
+pub type RelicOperationResult<T> = std::result::Result<T, RelicOperationError>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RelicOperationError {
+    TargetNotSelected,
+    RelicNotFound {
+        relic_id: String,
+    },
+    NoRelicSelected,
+    DifferentRelicSelected {
+        selected_relic_id: String,
+        result_relic_id: String,
+    },
+    BudgetExhausted,
+    Discarded {
+        relic_id: String,
+    },
+    Locked {
+        relic_id: String,
+    },
+    MaxLevel {
+        relic_id: String,
+        level: u8,
+    },
+    EquippedByOtherCharacter {
+        relic_id: String,
+        character_id: String,
+    },
+    StoppedForTarget {
+        relic_id: String,
+        character_id: String,
+    },
+    HoldRequiresExplicitResume {
+        relic_id: String,
+        character_id: String,
+    },
+    StaleUpgradeResult {
+        relic_id: String,
+        reported_level: u8,
+        current_level: u8,
+    },
+    InvalidIncrease,
+    InvalidSubstat {
+        stat: Stat,
+    },
+    MainStatConflict {
+        stat: Stat,
+    },
+    MustAddFourthSubstat,
+    MustUpgradeExistingSubstat,
+    InvalidSubstatCount {
+        count: usize,
+    },
+    StatOverflow {
+        stat: Stat,
+    },
+    EvaluationFailed(Error),
+}
+
+impl std::fmt::Display for RelicOperationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for RelicOperationError {}
+
+impl From<Error> for RelicOperationError {
+    fn from(error: Error) -> Self {
+        Self::EvaluationFailed(error)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelicSelection {
+    Selected { relic_id: String },
+    ResumedFromHold { relic_id: String },
+}
+
 pub struct DecisionEngine<E> {
     account: AccountState,
     evaluator: E,
@@ -49,6 +128,49 @@ impl<E: Evaluator> DecisionEngine<E> {
         self.goal
             .as_ref()
             .ok_or_else(|| Error("请先选择目标角色".into()))
+    }
+
+    fn operation_goal(&self) -> RelicOperationResult<&CultivationGoal> {
+        self.goal
+            .as_ref()
+            .ok_or(RelicOperationError::TargetNotSelected)
+    }
+
+    fn operation_block(
+        &self,
+        relic: &Relic,
+        goal: &CultivationGoal,
+    ) -> Option<RelicOperationError> {
+        if self.account.upgrade_steps == 0 {
+            return Some(RelicOperationError::BudgetExhausted);
+        }
+        if relic.discarded {
+            return Some(RelicOperationError::Discarded {
+                relic_id: relic.id.clone(),
+            });
+        }
+        if relic.locked {
+            return Some(RelicOperationError::Locked {
+                relic_id: relic.id.clone(),
+            });
+        }
+        if relic.level >= 15 {
+            return Some(RelicOperationError::MaxLevel {
+                relic_id: relic.id.clone(),
+                level: relic.level,
+            });
+        }
+        if let Some(character_id) = relic
+            .equipped_by
+            .as_ref()
+            .filter(|id| *id != &goal.character_id)
+        {
+            return Some(RelicOperationError::EquippedByOtherCharacter {
+                relic_id: relic.id.clone(),
+                character_id: character_id.clone(),
+            });
+        }
+        None
     }
 
     fn eligible(relic: &Relic, goal: &CultivationGoal) -> bool {
@@ -151,64 +273,105 @@ impl<E: Evaluator> DecisionEngine<E> {
     }
 
     /// Explicit selection resumes Hold; Stop is excluded for this target for this session.
-    pub fn select_relic(&mut self, relic_id: &str) -> Result<()> {
-        let goal = self.required_goal()?.clone();
-        let relic = self
-            .account
-            .relics
-            .get(relic_id)
-            .ok_or_else(|| Error("遗器不存在".into()))?;
-        if self.account.upgrade_steps == 0 || !Self::eligible(relic, &goal) {
-            return Err(Error(
-                "预算耗尽，或遗器已满级、锁定、标记丢弃、装备于其他角色".into(),
-            ));
-        }
-        let key = (goal.character_id, relic_id.into());
+    pub fn select_relic(&mut self, relic_id: &str) -> RelicOperationResult<RelicSelection> {
+        let goal = self.operation_goal()?.clone();
+        let relic = self.account.relics.get(relic_id).ok_or_else(|| {
+            RelicOperationError::RelicNotFound {
+                relic_id: relic_id.into(),
+            }
+        })?;
+        let key = (goal.character_id.clone(), relic_id.into());
         if self.account.decisions.get(&key) == Some(&UpgradeDecision::Stop) {
-            return Err(Error("这件遗器已对当前目标 Stop；请推荐其他候选".into()));
+            return Err(RelicOperationError::StoppedForTarget {
+                relic_id: relic_id.into(),
+                character_id: goal.character_id,
+            });
         }
-        self.account.decisions.remove(&key);
+        if let Some(reason) = self.operation_block(relic, &goal) {
+            return Err(reason);
+        }
+        let resumed = self.account.decisions.remove(&key) == Some(UpgradeDecision::Hold);
         self.selected = Some(relic_id.into());
-        Ok(())
+        if resumed {
+            Ok(RelicSelection::ResumedFromHold {
+                relic_id: relic_id.into(),
+            })
+        } else {
+            Ok(RelicSelection::Selected {
+                relic_id: relic_id.into(),
+            })
+        }
     }
 
     /// Applies a single observed result transactionally. Validation/evaluator errors
     /// leave the relic, budget, decisions, selection, and history unchanged.
-    pub fn apply_upgrade(&mut self, result: UpgradeResult) -> Result<UpgradeOutcome> {
-        let goal = self.required_goal()?.clone();
-        if self.selected.as_deref() != Some(&result.relic_id) {
-            return Err(Error("强化结果必须对应当前选中遗器".into()));
-        }
+    pub fn apply_upgrade(&mut self, result: UpgradeResult) -> RelicOperationResult<UpgradeOutcome> {
+        let goal = self.operation_goal()?.clone();
         let before = self
             .account
             .relics
             .get(&result.relic_id)
-            .ok_or_else(|| Error("遗器不存在".into()))?
+            .ok_or_else(|| RelicOperationError::RelicNotFound {
+                relic_id: result.relic_id.clone(),
+            })?
             .clone();
-        if self.account.upgrade_steps == 0 || !Self::eligible(&before, &goal) {
-            return Err(Error("当前不能强化".into()));
+        let key = (goal.character_id.clone(), before.id.clone());
+        match self.account.decisions.get(&key) {
+            Some(UpgradeDecision::Stop) => {
+                return Err(RelicOperationError::StoppedForTarget {
+                    relic_id: before.id,
+                    character_id: goal.character_id,
+                });
+            }
+            Some(UpgradeDecision::Hold) => {
+                return Err(RelicOperationError::HoldRequiresExplicitResume {
+                    relic_id: before.id,
+                    character_id: goal.character_id,
+                });
+            }
+            _ => {}
+        }
+        match self.selected.as_deref() {
+            None => return Err(RelicOperationError::NoRelicSelected),
+            Some(selected) if selected != result.relic_id => {
+                return Err(RelicOperationError::DifferentRelicSelected {
+                    selected_relic_id: selected.into(),
+                    result_relic_id: result.relic_id,
+                });
+            }
+            Some(_) => {}
+        }
+        if let Some(reason) = self.operation_block(&before, &goal) {
+            return Err(reason);
         }
         if before.level != result.expected_level {
-            return Err(Error("旧等级不匹配：拒绝重复或过期的强化结果".into()));
+            return Err(RelicOperationError::StaleUpgradeResult {
+                relic_id: before.id,
+                reported_level: result.expected_level,
+                current_level: before.level,
+            });
         }
-        if !result.increase.is_finite()
-            || result.increase <= 0.0
-            || !result.stat.is_substat()
-            || result.stat == before.main_stat
-        {
-            return Err(Error("副属性及增量无效".into()));
+        if !result.increase.is_finite() || result.increase <= 0.0 {
+            return Err(RelicOperationError::InvalidIncrease);
+        }
+        if !result.stat.is_substat() {
+            return Err(RelicOperationError::InvalidSubstat { stat: result.stat });
+        }
+        if result.stat == before.main_stat {
+            return Err(RelicOperationError::MainStatConflict { stat: result.stat });
         }
         let exists = before.substats.contains_key(&result.stat);
-        if (before.substats.len() == 3 && exists) || (before.substats.len() == 4 && !exists) {
-            return Err(Error(
-                "三词条时下一步必须新增第四词条；四词条时只能增加已有词条".into(),
-            ));
+        match (before.substats.len(), exists) {
+            (3, true) => return Err(RelicOperationError::MustAddFourthSubstat),
+            (4, false) => return Err(RelicOperationError::MustUpgradeExistingSubstat),
+            (3 | 4, _) => {}
+            (count, _) => return Err(RelicOperationError::InvalidSubstatCount { count }),
         }
         let mut after = before.clone();
         let value = after.substats.entry(result.stat).or_default();
         *value += result.increase;
         if !value.is_finite() {
-            return Err(Error("属性数值溢出".into()));
+            return Err(RelicOperationError::StatOverflow { stat: result.stat });
         }
         after.level += 3;
 

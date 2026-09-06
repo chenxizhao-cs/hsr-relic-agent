@@ -1,13 +1,114 @@
 use std::io::{self, Write};
 
 use hsr_relic_agent::{
-    DEMO_ACCOUNT, DecisionEngine, Error, MockEvaluator, Result, Stat, UpgradeRecommendation,
-    UpgradeResult, load_scanner_v4,
+    DEMO_ACCOUNT, DecisionEngine, Error, MockEvaluator, RelicOperationError, RelicSelection, Stat,
+    UpgradeRecommendation, UpgradeResult, load_scanner_v4,
 };
 
 type Engine = DecisionEngine<MockEvaluator>;
+type CliResult<T> = std::result::Result<T, CliError>;
 
-pub fn run() -> Result<()> {
+#[derive(Debug)]
+pub(crate) enum CliError {
+    Core(Error),
+    RelicOperation(RelicOperationError),
+}
+
+impl From<Error> for CliError {
+    fn from(error: Error) -> Self {
+        Self::Core(error)
+    }
+}
+
+impl From<RelicOperationError> for CliError {
+    fn from(error: RelicOperationError) -> Self {
+        Self::RelicOperation(error)
+    }
+}
+
+impl std::fmt::Display for CliError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Core(error) => error.fmt(f),
+            Self::RelicOperation(error) => f.write_str(&operation_message(error)),
+        }
+    }
+}
+
+fn operation_message(error: &RelicOperationError) -> String {
+    match error {
+        RelicOperationError::TargetNotSelected => {
+            "尚未选择目标角色，请先输入 target Blade 或 target Seele。".into()
+        }
+        RelicOperationError::RelicNotFound { relic_id } => {
+            format!("找不到遗器 {relic_id}，请检查 ID。")
+        }
+        RelicOperationError::NoRelicSelected => {
+            "当前没有选中的遗器，请先使用 next 或 choose ID。".into()
+        }
+        RelicOperationError::DifferentRelicSelected {
+            selected_relic_id,
+            result_relic_id,
+        } => format!(
+            "当前选中的是遗器 {selected_relic_id}，不能把遗器 {result_relic_id} 的强化结果记到它上面。"
+        ),
+        RelicOperationError::BudgetExhausted => "强化预算已经用完，无法再选择或强化遗器。".into(),
+        RelicOperationError::Discarded { relic_id } => {
+            format!("遗器 {relic_id} 已标记为 discard（遗弃），不能选择或强化。")
+        }
+        RelicOperationError::Locked { relic_id } => {
+            format!("遗器 {relic_id} 已锁定，解除锁定后才能选择或强化。")
+        }
+        RelicOperationError::MaxLevel { relic_id, level } => {
+            format!("遗器 {relic_id} 已经达到 +{level}，不能继续强化。")
+        }
+        RelicOperationError::EquippedByOtherCharacter {
+            relic_id,
+            character_id,
+        } => format!("遗器 {relic_id} 正装备在其他角色 {character_id} 身上，当前规则不允许操作。"),
+        RelicOperationError::StoppedForTarget {
+            relic_id,
+            character_id,
+        } => format!("遗器 {relic_id} 对当前目标 {character_id} 已判定为 Stop，请选择其他候选。"),
+        RelicOperationError::HoldRequiresExplicitResume {
+            relic_id,
+            character_id,
+        } => format!(
+            "遗器 {relic_id} 对当前目标 {character_id} 处于 Hold；请先输入 choose {relic_id} 显式恢复，再录入强化结果。"
+        ),
+        RelicOperationError::StaleUpgradeResult {
+            relic_id,
+            reported_level,
+            current_level,
+        } => format!(
+            "遗器 {relic_id} 当前是 +{current_level}，收到的结果基于 +{reported_level}；已拒绝这条过期或重复结果。"
+        ),
+        RelicOperationError::InvalidIncrease => "强化增量必须是大于 0 的有限数值。".into(),
+        RelicOperationError::InvalidSubstat { stat } => {
+            format!("{stat:?} 不是可录入的遗器副属性。")
+        }
+        RelicOperationError::MainStatConflict { stat } => {
+            format!("{stat:?} 是这件遗器的主属性，不能同时作为副属性录入。")
+        }
+        RelicOperationError::MustAddFourthSubstat => {
+            "这件遗器当前只有三条副属性，本次强化必须录入新增的第四条副属性。".into()
+        }
+        RelicOperationError::MustUpgradeExistingSubstat => {
+            "这件遗器已有四条副属性，本次强化只能增加其中一条已有副属性。".into()
+        }
+        RelicOperationError::InvalidSubstatCount { count } => {
+            format!("这件遗器当前有 {count} 条副属性，状态不符合 v0.1.1 的强化规则。")
+        }
+        RelicOperationError::StatOverflow { stat } => {
+            format!("{stat:?} 的结果超出可表示范围，账号状态未更新。")
+        }
+        RelicOperationError::EvaluationFailed(error) => {
+            format!("重新评价遗器失败：{error}")
+        }
+    }
+}
+
+pub(crate) fn run() -> CliResult<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!(
@@ -18,10 +119,10 @@ pub fn run() -> Result<()> {
     let interactive = match args.as_slice() {
         [] => false,
         [arg] if arg == "--interactive" => true,
-        _ => return Err(Error("仅支持 --interactive / --help".into())),
+        _ => return Err(Error("仅支持 --interactive / --help".into()).into()),
     };
     let mut engine = Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, MockEvaluator);
-    println!("HSR 遗器强化 Demo v0.1 — Mock 评分，不代表真实战斗收益");
+    println!("HSR 遗器强化 Demo v0.1.1 — Mock 评分，不代表真实战斗收益");
     println!(
         "已加载 fixtures/scanner-v4-demo.json：{} 个角色 / {} 件遗器，预算 {} 步（一次 +3 消耗一步）。",
         engine.account().characters.len(),
@@ -52,11 +153,11 @@ fn show_selected(engine: &Engine) {
     }
 }
 
-fn set_target(engine: &mut Engine, target: &str) -> Result<()> {
+fn set_target(engine: &mut Engine, target: &str) -> CliResult<()> {
     let id = match target.to_ascii_lowercase().as_str() {
         "blade" | "1205" => "1205",
         "seele" | "1102" => "1102",
-        _ => return Err(Error("目标需为 Blade / Seele / 1205 / 1102".into())),
+        _ => return Err(Error("目标需为 Blade / Seele / 1205 / 1102".into()).into()),
     };
     engine.set_goal(id)?;
     println!(
@@ -69,7 +170,7 @@ fn set_target(engine: &mut Engine, target: &str) -> Result<()> {
     Ok(())
 }
 
-fn show_ranking(engine: &Engine) -> Result<()> {
+fn show_ranking(engine: &Engine) -> CliResult<()> {
     let ranked = engine.rank_candidates()?;
     println!("候选排序（Mock 单位步数收益）：");
     for (i, r) in ranked.iter().enumerate() {
@@ -89,10 +190,10 @@ fn show_ranking(engine: &Engine) -> Result<()> {
     Ok(())
 }
 
-fn observe(engine: &mut Engine, stat: Stat, increase: f64) -> Result<()> {
+fn observe(engine: &mut Engine, stat: Stat, increase: f64) -> CliResult<()> {
     let selected = engine
         .selected()
-        .ok_or_else(|| Error("没有选中遗器，请先 target / next / choose".into()))?;
+        .ok_or(RelicOperationError::NoRelicSelected)?;
     let id = selected.id.clone();
     let old_level = selected.level;
     let out = engine.apply_upgrade(UpgradeResult {
@@ -135,7 +236,7 @@ fn show_history(engine: &Engine) {
     }
 }
 
-fn demo(engine: &mut Engine) -> Result<()> {
+fn demo(engine: &mut Engine) -> CliResult<()> {
     println!("\n自动脚本：先比较目标，再录入固定的模拟观察；未使用 fixture 的 preview_substats。");
     set_target(engine, "Seele")?;
     set_target(engine, "Blade")?;
@@ -161,7 +262,7 @@ fn help() {
     );
 }
 
-fn parse_stat(value: &str) -> Result<Stat> {
+fn parse_stat(value: &str) -> CliResult<Stat> {
     Ok(match value {
         "hp" => Stat::Hp,
         "atk" => Stat::Atk,
@@ -175,11 +276,11 @@ fn parse_stat(value: &str) -> Result<Stat> {
         "ehr" => Stat::EffectHit,
         "res" => Stat::EffectRes,
         "be" => Stat::BreakEffect,
-        _ => return Err(Error("未知副属性缩写，请输入 help".into())),
+        _ => return Err(Error("未知副属性缩写，请输入 help".into()).into()),
     })
 }
 
-fn command(engine: &mut Engine, words: &[&str]) -> Result<()> {
+fn command(engine: &mut Engine, words: &[&str]) -> CliResult<()> {
     match words {
         ["target", target] => set_target(engine, target)?,
         ["rank"] => show_ranking(engine)?,
@@ -188,7 +289,14 @@ fn command(engine: &mut Engine, words: &[&str]) -> Result<()> {
             show_selected(engine);
         }
         ["choose", id] => {
-            engine.select_relic(id)?;
+            match engine.select_relic(id)? {
+                RelicSelection::Selected { relic_id } => {
+                    println!("已选择遗器 {relic_id}。")
+                }
+                RelicSelection::ResumedFromHold { relic_id } => {
+                    println!("遗器 {relic_id} 此前处于 Hold；已按显式 choose 恢复。")
+                }
+            }
             show_selected(engine);
         }
         ["upgrade", stat, delta] => {
@@ -203,12 +311,12 @@ fn command(engine: &mut Engine, words: &[&str]) -> Result<()> {
         ["history"] => show_history(engine),
         ["help"] => help(),
         [] => (),
-        _ => return Err(Error("命令或参数数量不正确，请输入 help".into())),
+        _ => return Err(Error("命令或参数数量不正确，请输入 help".into()).into()),
     }
     Ok(())
 }
 
-fn interact(engine: &mut Engine) -> Result<()> {
+fn interact(engine: &mut Engine) -> CliResult<()> {
     help();
     println!("请输入 target Blade 或 target Seele 开始。");
     let mut line = String::new();

@@ -17,6 +17,189 @@ fn upgrade(id: &str, level: u8, stat: Stat, increase: f64) -> UpgradeResult {
 }
 
 #[test]
+fn selection_failures_return_specific_reasons() {
+    let account = load_scanner_v4(DEMO_ACCOUNT, 8).unwrap();
+    let mut no_goal = DecisionEngine::new(account.clone(), MockEvaluator);
+    assert_eq!(
+        no_goal.select_relic("9100001").unwrap_err(),
+        RelicOperationError::TargetNotSelected
+    );
+
+    let mut account = account;
+    account.relics.get_mut("9100002").unwrap().discarded = true;
+    account.relics.get_mut("9100006").unwrap().locked = false;
+    account.relics.get_mut("9100006").unwrap().level = 15;
+    account.relics.get_mut("9200005").unwrap().locked = false;
+    let mut e = DecisionEngine::new(account, MockEvaluator);
+    e.set_goal("1205").unwrap();
+
+    assert_eq!(
+        e.select_relic("missing").unwrap_err(),
+        RelicOperationError::RelicNotFound {
+            relic_id: "missing".into()
+        }
+    );
+    assert_eq!(
+        e.select_relic("9100002").unwrap_err(),
+        RelicOperationError::Discarded {
+            relic_id: "9100002".into()
+        }
+    );
+    assert_eq!(
+        e.select_relic("9100005").unwrap_err(),
+        RelicOperationError::Locked {
+            relic_id: "9100005".into()
+        }
+    );
+    assert_eq!(
+        e.select_relic("9100006").unwrap_err(),
+        RelicOperationError::MaxLevel {
+            relic_id: "9100006".into(),
+            level: 15
+        }
+    );
+    assert_eq!(
+        e.select_relic("9200005").unwrap_err(),
+        RelicOperationError::EquippedByOtherCharacter {
+            relic_id: "9200005".into(),
+            character_id: "1102".into()
+        }
+    );
+
+    let mut no_budget = engine(0);
+    assert_eq!(
+        no_budget.select_relic("9100001").unwrap_err(),
+        RelicOperationError::BudgetExhausted
+    );
+}
+
+#[test]
+fn hold_requires_explicit_resume_and_stop_cannot_be_resumed() {
+    let mut e = engine(8);
+    e.select_relic("9100001").unwrap();
+    e.apply_upgrade(upgrade("9100001", 0, Stat::DefPercent, 5.4))
+        .unwrap();
+
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100001", 3, Stat::DefPercent, 5.4))
+            .unwrap_err(),
+        RelicOperationError::HoldRequiresExplicitResume {
+            relic_id: "9100001".into(),
+            character_id: "1205".into()
+        }
+    );
+    assert_eq!(
+        e.select_relic("9100001").unwrap(),
+        RelicSelection::ResumedFromHold {
+            relic_id: "9100001".into()
+        }
+    );
+    e.apply_upgrade(upgrade("9100001", 3, Stat::DefPercent, 5.4))
+        .unwrap();
+    assert_eq!(
+        e.select_relic("9100001").unwrap_err(),
+        RelicOperationError::StoppedForTarget {
+            relic_id: "9100001".into(),
+            character_id: "1205".into()
+        }
+    );
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100001", 6, Stat::DefPercent, 5.4))
+            .unwrap_err(),
+        RelicOperationError::StoppedForTarget {
+            relic_id: "9100001".into(),
+            character_id: "1205".into()
+        }
+    );
+}
+
+#[test]
+fn upgrade_input_failures_return_specific_reasons() {
+    let mut e = engine(8);
+    assert_eq!(
+        e.apply_upgrade(upgrade("missing", 0, Stat::CritDamage, 6.48))
+            .unwrap_err(),
+        RelicOperationError::RelicNotFound {
+            relic_id: "missing".into()
+        }
+    );
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100001", 0, Stat::CritDamage, 6.48))
+            .unwrap_err(),
+        RelicOperationError::NoRelicSelected
+    );
+    e.select_relic("9100001").unwrap();
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100002", 3, Stat::CritRate, 3.24))
+            .unwrap_err(),
+        RelicOperationError::DifferentRelicSelected {
+            selected_relic_id: "9100001".into(),
+            result_relic_id: "9100002".into()
+        }
+    );
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100001", 3, Stat::CritDamage, 6.48))
+            .unwrap_err(),
+        RelicOperationError::StaleUpgradeResult {
+            relic_id: "9100001".into(),
+            reported_level: 3,
+            current_level: 0
+        }
+    );
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100001", 0, Stat::CritDamage, -1.0))
+            .unwrap_err(),
+        RelicOperationError::InvalidIncrease
+    );
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100001", 0, Stat::EnergyRegen, 1.0))
+            .unwrap_err(),
+        RelicOperationError::InvalidSubstat {
+            stat: Stat::EnergyRegen
+        }
+    );
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100001", 0, Stat::Hp, 42.0))
+            .unwrap_err(),
+        RelicOperationError::MainStatConflict { stat: Stat::Hp }
+    );
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100001", 0, Stat::CritRate, 3.24))
+            .unwrap_err(),
+        RelicOperationError::MustAddFourthSubstat
+    );
+
+    e.apply_upgrade(upgrade("9100001", 0, Stat::CritDamage, 6.48))
+        .unwrap();
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100001", 3, Stat::DefPercent, 5.4))
+            .unwrap_err(),
+        RelicOperationError::MustUpgradeExistingSubstat
+    );
+}
+
+#[test]
+fn overflowing_stat_result_is_rejected_with_specific_reason() {
+    let mut account = load_scanner_v4(DEMO_ACCOUNT, 8).unwrap();
+    account
+        .relics
+        .get_mut("9100002")
+        .unwrap()
+        .substats
+        .insert(Stat::CritRate, f64::MAX);
+    let mut e = DecisionEngine::new(account, MockEvaluator);
+    e.set_goal("1205").unwrap();
+    e.select_relic("9100002").unwrap();
+    assert_eq!(
+        e.apply_upgrade(upgrade("9100002", 3, Stat::CritRate, f64::MAX))
+            .unwrap_err(),
+        RelicOperationError::StatOverflow {
+            stat: Stat::CritRate
+        }
+    );
+}
+
+#[test]
 fn imports_fixture_into_own_model_without_preview() {
     let account = load_scanner_v4(DEMO_ACCOUNT, 8).unwrap();
     assert_eq!(account.characters.len(), 2);
@@ -303,9 +486,10 @@ fn evaluator_can_be_replaced_and_failure_rolls_back_upgrade() {
     e.set_goal("1205").unwrap();
     e.select_relic("9100001").unwrap();
     let before = e.account().clone();
-    assert!(
+    assert_eq!(
         e.apply_upgrade(upgrade("9100001", 0, Stat::CritDamage, 6.48))
-            .is_err()
+            .unwrap_err(),
+        RelicOperationError::EvaluationFailed(Error("模拟评估器失败".into()))
     );
     assert_eq!(*e.account(), before);
     assert_eq!(e.selected().unwrap().id, "9100001");

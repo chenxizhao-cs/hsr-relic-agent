@@ -1,4 +1,4 @@
-# 遗器强化决策 Demo v0.1
+# 遗器强化决策 Demo v0.1.1
 
 独立 Rust package：library 负责导入、评分、排序、状态修改与决策，CLI 只负责输入输出。仅使用 `serde` / `serde_json`，不调用 LLM 或第三方计算工具。
 
@@ -45,6 +45,8 @@ quit
 
 Continue 保持当前选择；Hold / Stop 自动选择下一候选（若有）。Hold 可用 `choose ID` 恢复；Stop 在本次会话中对当前目标排除，**不会删除遗器**。切换目标不重置属性、预算或历史。
 
+无法选择或强化时，core 返回 `RelicOperationError`，区分未选目标/遗器、预算耗尽、遗弃、锁定、满级、装备在其他角色身上、当前目标下 Stop、Hold 尚未显式恢复，以及强化结果与当前选择、等级、词条规则或数值不匹配等原因。`select_relic` 返回 `RelicSelection`，CLI 因而能明确显示普通选择或从 Hold 恢复。未来界面可以直接匹配这些类型，不需要解析中文错误文本。
+
 ## 模块
 
 ```text
@@ -62,7 +64,7 @@ tests/cli.rs      自动与交互流程的进程级测试
 
 业务 API：`load_scanner_v4(json, steps)` → `DecisionEngine::new(account, evaluator)` → `set_goal(id)` → `recommend_next()` → `apply_upgrade(UpgradeResult)`。调用者可以直接构造内部模型或实现 `Evaluator`，无需启动 CLI。`UpgradeResult.expected_level` 用于拒绝过期/重复结果；CLI 根据当前选中遗器填入。
 
-## v0.1 规则（演示启发式，不是游戏数学结论）
+## v0.1.1 规则（演示启发式，不是游戏数学结论）
 
 ### Mock 评分
 
