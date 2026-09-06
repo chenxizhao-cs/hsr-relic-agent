@@ -54,7 +54,7 @@ Hold / Stop 后可改推同一目标角色的另一件候选；预算耗尽或�
  继续当前遗器 / 改推其他遗器 / 暂停本次投入
 ```
 
-业务闭环由 Rust core 执行。输入既可来自当前 CLI，也可来自后续交互层；LLM 接入后参与理解约束、工具编排与解释。
+业务闭环由 Rust core 执行。输入可来自当前 CLI 或 Web Demo；LLM 接入后参与理解约束、工具编排与解释。
 
 ## 4. 工程结构原则
 
@@ -67,9 +67,9 @@ Hold / Stop 后可改推同一目标角色的另一件候选；预算耗尽或�
 ### 交互层
 
 - CLI 是当前的一种交互层，负责输入解析、调用 core 和展示结果，不承载评分、排序或决策规则。
-- 后续 Web/API/GUI 应直接复用同一 core；如需服务层，它只负责交互与传输适配。
+- 当前 Web/API 与 CLI 直接复用同一 core；服务层只负责会话访问、交互与传输适配。
 - 前端与核心后端解耦，不能通过解析 CLI 展示文本复用业务能力。
-- 当前只明确这些边界，不提前选定 GUI 技术栈、HTTP API 或新增目录结构。
+- 本次 Web 单页选择原生 HTML/CSS/JavaScript 与 Rust Axum；不因此预设后续完整 GUI 的结构。
 
 ### Adapter / Tool 边界
 
@@ -132,7 +132,15 @@ v0.1 没有真实 LLM、Fribbels 调用、真实资源成本或完整 Build 计�
 
 重要边界：当前旧版 `1205 / 1102` 源码只实现普通攻击与击破，`BASIC` 为 100% ATK 简化普攻；**不是 Blade 生命缩放强化普攻、完整角色输出或 DPS**。它在排序中只是有限的 Build 结构参考，不能把评分潜力推断成未来伤害。角色/光锥只接受 80 级，完整行迹与默认条件为显式假设；不擅自采用 `b1` 角色版本。详细协议、敌人条件和来源见 [Adapter 文档](adapters/fribbels/README.md)。
 
-真实资源成本、游戏 roll 合法性完整验证、持久化、LLM、Reliquary 和 GUI 均未接入。
+真实资源成本、游戏 roll 合法性完整验证、持久化、LLM、Reliquary 均未接入。
+
+### Web Demo：复用 v0.2 闭环
+
+`web/` 展示与输入 → `hsr-relic-web/` 薄 API → 现有 Rust DecisionEngine → Evaluator → Fribbels Adapter。无新增排序或决策算法，CLI 不受影响。API 在独立会话中维护模拟账号，以版本号拒绝过期/重复提交；成功生成评价快照后才提交操作，失败/取消保留先前状态。进度显示任务等待秒数，不虚构内部计算百分比。
+
+卡片与页面独立实现；构建时调用上游 `src/lib/rendering/assets.ts` 的 Assets 方法，读取当前 fixture 所需资源映射。前端通过独立 AssetProvider 访问本地图片，不依赖 Fribbels React 组件或 store。上游固定版本、来源文件和图片权利说明见 [Web 文档](web/README.md) 与 [资源致谢](web/credits.html)。未修改第三方源码。
+
+课堂试用暂用内存会话、固定 8 步预算与当前 fixture，没有公网部署、认证或数据库；服务器重启会丢失历史。Web 中的简化普攻口径与 v0.2 一致，不代表完整角色输出。
 
 ## 8. 后续版本规划
 
@@ -152,7 +160,7 @@ v0.1 没有真实 LLM、Fribbels 调用、真实资源成本或完整 Build 计�
 
 ### 按需考虑，暂不排期
 
-- 复用现有 core 的 Web/API/GUI 交互层。
+- 在现有 Web Demo 基础上完善 GUI 与持久化。
 - 更精细的单角色配装反馈与强化概率模型。
 - 账号状态实时同步。
 

@@ -25,6 +25,7 @@
 - 独立 Rust library、CLI 演示与核心逻辑测试。
 - 可供 CLI 和未来 GUI 复用的结构化遗器不可操作原因。
 - 真实遗器评分、满级潜力、六件参考 Build 面板与简化普攻指标；Rust 负责最终排序和决策。
+- 可供课堂试用的单页 Web Demo：与 CLI 共用 core，支持选择、强化观察、三种判断、预算、历史与重置。
 
 目前不接 LLM / 真实账号采集。评分和潜力来自固定 Fribbels 源码，预算与决策仍为演示启发式。**fixture 对应的旧版 Blade / Seele 在当前上游只有简化普通攻击实现，不能把该伤害指标当作完整实战收益。**
 
@@ -42,15 +43,24 @@ cargo run -- --mock
 
 操作方法、模块和规则见 [`hsr-relic-agent/README.md`](./hsr-relic-agent/README.md)。
 
+### Web 试用
+
+```bash
+node web/prepare.mjs
+cargo run --manifest-path hsr-relic-web/Cargo.toml
+```
+
+打开 <http://127.0.0.1:3000>。同一局域网试用可添加 `-- --lan`，同学使用主机局域网 IP 访问。每个独立会话使用模拟账号；不面向公网部署。启动、观察样例和资源来源见 [Web Demo 说明](web/README.md)。
+
 ## 核心思路
 
 项目将现有开源工具作为独立能力使用，而不是基于其源码进行增量开发。
 
-Rust core / library 承担账号状态、候选排序、强化事件与决策、工具编排等业务逻辑。CLI 是当前的输入与展示层；后续 Web/API/GUI 应复用同一 core，前端与核心后端保持解耦。
+Rust core / library 承担账号状态、候选排序、强化事件与决策、工具编排等业务逻辑。CLI 和当前 Web Demo 共用这一 core，前端与核心后端保持解耦。
 
 ```text
 用户指定角色、预算与约束
-   ↓ 当前 CLI；后续可由 Web/API/GUI 输入
+   ↓ CLI 或 Web/API 输入
 Rust core：AccountState → 候选排序 → 推荐遗器
    ↑                               ↓
 更新同一遗器 ← 录入一次强化结果 ← 玩家强化
@@ -64,7 +74,7 @@ Rust core：AccountState → 候选排序 → 推荐遗器
 - 数值评价通过 `Evaluator` 抽象调用；v0.2 的 FribbelsEvaluator 经独立 Node Adapter 接入，MockEvaluator 保留为显式对照。
 - Reliquary / HSR-Scanner 等外部数据通过导入边界转换为 `AccountState`，业务层不直接依赖第三方 schema 或网页状态。
 - 后续 LLM 理解已指定角色的培养约束、编排工具并解释结果；确定性计算和状态更新由 Rust core 及其工具完成。
-- 当前仅明确复用与解耦原则，具体 GUI 技术栈、HTTP API 和新增目录结构待实际需要时确定。
+- 当前 Web 采用独立原生前端和薄 Rust API；不预设后续完整 GUI 或 Agent 的具体结构。
 
 详细设计见 [`DESIGN.md`](./DESIGN.md)。
 
@@ -76,6 +86,8 @@ hsr-relic-agent-workspace/
 ├── DESIGN.md
 ├── README.md
 ├── hsr-relic-agent/       # 独立 Rust package：library + CLI + tests
+├── hsr-relic-web/         # Rust Web/API：会话、DTO、传输适配
+├── web/                   # 独立单页与 Fribbels 视觉 AssetProvider
 ├── adapters/fribbels/    # 我们的 JSON ↔ Fribbels 薄 Adapter
 │
 ├── fixtures/
@@ -163,7 +175,7 @@ Demo v0.2 已在同一模拟账号上接入真实 Evaluator，保持：
 
 1. 评价迭代：优先明确角色技能版本与完整参考配装，验证更有代表性的单角色伤害指标，再校准当前启发式；真实资源成本与更广泛导入仍待后续。
 2. v0.3：接入该角色强化任务的 LLM 交互与工具编排，完善历史、配置、进度/打断及 Token/费用管理等课程要求。
-3. 后续按需增加复用 core 的 Web/API/GUI 交互层。
+3. 在现有 Web Demo 上按需完善交互与持久化，继续复用同一 core。
 
 角色培养优先级、多角色资源分配和全账号库存清理不在当前计划内；重置资源决策、完整队伍模拟和复杂概率模型也暂不排期。
 

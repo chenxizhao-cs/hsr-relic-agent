@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#11151f">
+  <title>遗器培养终端 · HSR Relic Agent</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%23dfc38a' d='M16 0l4 12 12 4-12 4-4 12-4-12L0 16l12-4z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="遗器培养终端首页"><span class="brand-mark">✦</span><span>遗器培养终端<small>RELIC CULTIVATION TERMINAL</small></span></a>
+    <nav aria-label="页面导航"><span class="nav-active">强化工作台</span><button id="guide-button" class="text-button">试用指南 ↗</button></nav>
+    <div class="header-right"><span class="online"><i></i> DEMO / 02</span><button id="reset" class="outline-button" disabled>↺ 重置试用</button></div>
+  </header>
+  <main>
+    <div class="page-heading"><div><div class="eyebrow">ASTRAL WORKSHOP <span> / </span> 遗器培养</div><h1>让每一次强化，更有方向。</h1><p>选定你的目标角色，找到下一件值得投入的遗器。</p></div><div class="budget"><span class="budget-glyph">✧</span><div><small>剩余强化预算</small><strong id="budget">—</strong><span> / 8 步</span></div></div></div>
+    <ol class="flow" aria-label="强化流程"><li id="step-target" class="active"><b>01</b> 选择角色</li><li id="step-select"><b>02</b> 挑选遗器</li><li id="step-upgrade"><b>03</b> 录入强化</li><li id="step-result"><b>04</b> 查看建议</li></ol>
+    <div id="error" class="error-banner" role="alert" hidden></div>
+    <div id="progress" class="progress-banner" role="status" hidden><span class="spinner"></span><span id="progress-text">正在重新评价遗器…</span><button id="cancel" class="text-button">取消本次计算</button></div>
+    <div class="workbench">
+      <aside class="character-panel panel"><div class="panel-label"><span>培养目标</span><small>CHARACTER</small></div><div id="characters" class="character-buttons"></div><div id="character-art" class="character-art"><div class="orbit"></div><div class="character-placeholder">✧<p>选择一位同行者</p><small>本次只围绕一个角色培养</small></div></div><div id="character-caption" class="character-caption"><small>YOUR NEXT UPGRADE</small><h2>从一个目标开始</h2><p>从账号库存出发，让已有的遗器发挥价值。</p></div></aside>
+      <section class="inventory-panel panel" aria-label="遗器列表"><div class="panel-label"><span>遗器候选</span><small id="inventory-count">12 RELICS</small></div><div class="tabs" role="tablist"><button id="tab-ranked" role="tab" aria-selected="true">优先推荐 <span id="rank-count">0</span></button><button id="tab-all" role="tab" aria-selected="false">全部库存</button></div><div class="list-caption" id="list-caption">选择目标后，查看适合这位角色的强化候选。</div><div id="relic-list" class="relic-list"><div class="empty"><span>◇</span><p>推荐将在这里出现</p><small>先在左侧选择刃或希儿</small></div></div><div class="inventory-footer"><span id="evaluator-label">等待连接</span><span>库存来自模拟账号</span></div></section>
+      <section class="detail-panel panel" aria-label="当前选中遗器"><div class="panel-label"><span>强化观察</span><small>UPGRADE LAB</small></div><div id="detail"><div class="detail-empty"><div class="empty-orbit">✦</div><h2>准备好下一次强化</h2><p>选择目标后，我们会推荐一件候选遗器。<br>你也可以从库存中选择想继续观察的遗器。</p><div class="empty-tags"><span>评分与潜力</span><span>逐次观察</span><span>随时换一件</span></div></div></div></section>
+    </div>
+    <section id="result-panel" class="result-panel" aria-live="polite" hidden></section>
+    <section class="history-panel panel"><div class="panel-label"><span>本次强化记录 <span id="history-count" class="count-badge">0</span></span><small>OBSERVATION LOG</small></div><div id="history" class="history-empty">每一次观察都会留在这里。重新加载页面可继续本次试用。</div></section>
+    <details class="limits"><summary>关于这次试用与评价口径</summary><p>使用模拟账号，每次 +3 消耗 1 个演示步数；强化结果由你手动录入，不会操作游戏。Stop 表示对当前目标停止投入，不会弃置或分解遗器。独立打开地址创建独立试用会话，复制标签页可能继承同一会话。状态仅保留在服务内存中，重启服务后清空。</p><p>默认使用 Fribbels 的真实遗器评分与强化潜力。缺失配装的部位使用库存补齐作参考。当前旧版刃/希儿的伤害实现仅覆盖简化普攻（100% ATK），不可视为完整角色输出；角色与光锥按 80 级、完整行迹、无队友、95 级有弱点且未击破敌人计算。决策阈值和步数成本仍为 Demo 假设。</p></details>
+    <footer><span>HSR RELIC AGENT <span class="footer-star">✦</span> RUST COURSE PROJECT</span><span>非官方课堂 Demo · <a href="/credits.html">视觉资源与开源致谢 ↗</a></span></footer>
+  </main>
+  <dialog id="reset-dialog"><div class="eyebrow">NEW OBSERVATION</div><h2>重新开始本次试用？</h2><p>当前标签页的强化记录与选择将清空，恢复最初的 12 件遗器和 8 步预算。</p><div class="dialog-actions"><button id="reset-no" class="outline-button">保留当前进度</button><button id="reset-yes" class="primary-button">确认重置</button></div></dialog>
+  <dialog id="guide-dialog"><div class="eyebrow">QUICK START</div><h2>一轮强化，四个步骤</h2><ol class="guide"><li>选择刃或希儿，查看推荐。</li><li>点击遗器卡片，查看评分、潜力与副属性。全部库存里也可以手动选择候选。</li><li>录入这一次新增的副属性或属性增量，例如暴击率增加 3.24 个百分点。</li><li>查看 Continue / Hold / Stop 的原因，继续当前件，或观察新的推荐。</li></ol><p>想试试暂停流程？选择刃 → 全部库存 → 9100001，新增防御力% +5.4；之后再次选择它恢复观察，再录入防御力% +5.4。</p><p class="muted">这里录入的是模拟观察。已有四条词条时只能强化其中一条；只有三条时，需要新增第四条。</p><button id="guide-close" class="primary-button">开始观察</button></dialog>
+</body></html>

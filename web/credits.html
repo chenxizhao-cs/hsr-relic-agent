@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>资源与开源致谢 · 遗器培养终端</title><link rel="stylesheet" href="/style.css"></head>
+<body><main style="max-width:850px;line-height:2;padding-top:70px">
+<a href="/">← 返回培养终端</a><p class="eyebrow">SOURCES & ACKNOWLEDGEMENTS</p><h1>视觉资源与开源致谢</h1>
+<p>这是非官方课堂 Demo，与 HoYoverse 无隶属关系。游戏角色、美术与相关标识的权利归原权利人所有。图片用于项目学习与试用展示，不将其宣称为本项目原创或 MIT 授权素材。</p>
+<h2>Fribbels HSR Optimizer</h2>
+<p>遗器计算调用 <a href="https://github.com/fribbels/hsr-optimizer">Fribbels HSR Optimizer</a>，固定版本 <code>df630a0488a64eeb740e4e0c14f265d96b9f6f8f</code>。头像、立绘、遗器和属性图标使用其仓库现有资源，通过实际 Assets 模块生成映射，再从本地提供图片。</p>
+<p>研究参考：<code>src/lib/rendering/assets.ts</code>、<code>RelicPreview.tsx</code> 与 <code>RelicStatRow.tsx</code>。本项目独立编写卡片和页面，不复制其业务组件、页面状态管理或整套前端。</p>
+<p>Fribbels 代码许可证为 <a href="https://github.com/fribbels/hsr-optimizer/blob/df630a0488a64eeb740e4e0c14f265d96b9f6f8f/LICENSE.md">MIT License</a>，Copyright (c) 2024 Fribbels。原版权和许可声明保留于 upstream 仓库；本地生成的打包产物不提交。若分发打包后的第三方代码，须同时保留其完整许可声明。MIT 代码许可不等于游戏美术的再授权。</p>
+<h2>我们自己的边界</h2><p>页面只显示 Rust API 返回的结果。评分来自 Evaluator，排序与强化决策由 Rust core 完成。原生 HTML/CSS/JavaScript、Rust Web/API 层及 AssetProvider 均在本项目独立实现。模拟账号不关联任何真实玩家。</p>
+</main></body></html>

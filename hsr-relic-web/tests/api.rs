@@ -1,0 +1,202 @@
+use axum::{
+    Router,
+    body::Body,
+    http::{Request, StatusCode},
+};
+use hsr_relic_web::{App, router};
+use http_body_util::BodyExt;
+use serde_json::{Value, json};
+use std::path::PathBuf;
+use tower::ServiceExt;
+
+fn app() -> Router {
+    router(
+        App::new(true),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."),
+    )
+}
+async fn request(
+    app: &Router,
+    method: &str,
+    path: &str,
+    token: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .header("content-type", "application/json")
+                .header("x-demo-session", token)
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+async fn session(app: &Router) -> (String, Value) {
+    let (status, value) = request(app, "POST", "/api/session", "", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    (
+        value["session"].as_str().unwrap().into(),
+        value["state"].clone(),
+    )
+}
+async fn act(app: &Router, token: &str, state: &mut Value, mut action: Value) {
+    action["expected_revision"] = state["revision"].clone();
+    let (status, value) = request(app, "POST", "/api/action", token, action).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    *state = value;
+}
+fn relic<'a>(state: &'a Value, id: &str) -> &'a Value {
+    state["inventory"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn core_loop_updates_same_relic_and_resumes_hold_explicitly() {
+    let app = app();
+    let (token, mut state) = session(&app).await;
+    act(
+        &app,
+        &token,
+        &mut state,
+        json!({"action":"target","character_id":"1205"}),
+    )
+    .await;
+    act(
+        &app,
+        &token,
+        &mut state,
+        json!({"action":"select","relic_id":"9100002"}),
+    )
+    .await;
+    act(&app, &token, &mut state, json!({"action":"upgrade","relic_id":"9100002","expected_level":3,"stat":"crit_rate","increase":3.24})).await;
+    assert_eq!(state["last_result"]["decision"], "Continue");
+    assert_eq!(relic(&state, "9100002")["level"], 6);
+    act(
+        &app,
+        &token,
+        &mut state,
+        json!({"action":"select","relic_id":"9100001"}),
+    )
+    .await;
+    act(&app, &token, &mut state, json!({"action":"upgrade","relic_id":"9100001","expected_level":0,"stat":"def_percent","increase":5.4})).await;
+    assert_eq!(state["last_result"]["decision"], "Hold");
+    assert_eq!(relic(&state, "9100001")["decision"], "Hold");
+    act(
+        &app,
+        &token,
+        &mut state,
+        json!({"action":"select","relic_id":"9100001"}),
+    )
+    .await;
+    act(&app, &token, &mut state, json!({"action":"upgrade","relic_id":"9100001","expected_level":3,"stat":"def_percent","increase":5.4})).await;
+    assert_eq!(state["last_result"]["decision"], "Stop");
+    assert_eq!(relic(&state, "9100001")["level"], 6);
+    assert_eq!(
+        relic(&state, "9100001")["blocked"]["code"],
+        "stopped_for_target"
+    );
+    assert_ne!(state["selected_id"], "9100001");
+    assert_eq!(state["history"].as_array().unwrap().len(), 3);
+    assert_eq!(state["remaining_budget"], 5);
+}
+
+#[tokio::test]
+async fn errors_and_repeated_submissions_preserve_committed_state() {
+    let app = app();
+    let (token, mut state) = session(&app).await;
+    act(
+        &app,
+        &token,
+        &mut state,
+        json!({"action":"target","character_id":"1205"}),
+    )
+    .await;
+    act(
+        &app,
+        &token,
+        &mut state,
+        json!({"action":"select","relic_id":"9100002"}),
+    )
+    .await;
+    for (action, expected, code) in [
+        (
+            json!({"action":"upgrade","relic_id":"9100002","expected_level":3,"stat":"crit_rate","increase":-1,"expected_revision":2}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_increase",
+        ),
+        (
+            json!({"action":"select","relic_id":"9100005","expected_revision":2}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "locked",
+        ),
+        (
+            json!({"action":"select","relic_id":"9100001","expected_revision":1}),
+            StatusCode::CONFLICT,
+            "stale_revision",
+        ),
+        (
+            json!({"action":"upgrade","expected_revision":2}),
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+    ] {
+        let (status, error) = request(&app, "POST", "/api/action", &token, action).await;
+        assert_eq!(status, expected, "{error}");
+        assert_eq!(error["error"]["code"], code);
+        let (_, unchanged) = request(&app, "GET", "/api/state", &token, Value::Null).await;
+        assert_eq!(unchanged, state);
+    }
+    let command = json!({"action":"upgrade","relic_id":"9100002","expected_level":3,"stat":"crit_rate","increase":3.24,"expected_revision":2});
+    let (status, after) = request(&app, "POST", "/api/action", &token, command.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = request(&app, "POST", "/api/action", &token, command).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (_, unchanged) = request(&app, "GET", "/api/state", &token, Value::Null).await;
+    assert_eq!(unchanged, after);
+}
+
+#[tokio::test]
+async fn targets_differ_and_sessions_and_reset_are_isolated() {
+    let app = app();
+    let (a, mut blade) = session(&app).await;
+    let (b, mut seele) = session(&app).await;
+    act(
+        &app,
+        &a,
+        &mut blade,
+        json!({"action":"target","character_id":"1205"}),
+    )
+    .await;
+    act(
+        &app,
+        &b,
+        &mut seele,
+        json!({"action":"target","character_id":"1102"}),
+    )
+    .await;
+    assert_ne!(
+        blade["recommendations"][0]["relic_id"],
+        seele["recommendations"][0]["relic_id"]
+    );
+    act(&app, &a, &mut blade, json!({"action":"reset"})).await;
+    assert!(blade["target_id"].is_null());
+    assert_eq!(blade["remaining_budget"], 8);
+    let (_, other) = request(&app, "GET", "/api/state", &b, Value::Null).await;
+    assert_eq!(other, seele);
+    let (status, _) = request(&app, "GET", "/api/state", "missing", Value::Null).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (_, progress) = request(&app, "GET", "/api/progress", &b, Value::Null).await;
+    assert_eq!(progress["running"], false);
+}

@@ -79,6 +79,7 @@ pub enum RelicSelection {
     ResumedFromHold { relic_id: String },
 }
 
+#[derive(Clone)]
 pub struct DecisionEngine<E> {
     account: AccountState,
     evaluator: E,
