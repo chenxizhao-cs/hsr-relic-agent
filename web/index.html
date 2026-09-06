@@ -12,13 +12,26 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="遗器培养终端首页"><span class="brand-mark">✦</span><span>遗器培养终端<small>RELIC CULTIVATION TERMINAL</small></span></a>
     <nav aria-label="页面导航"><span class="nav-active">强化工作台</span><button id="guide-button" class="text-button">试用指南 ↗</button></nav>
-    <div class="header-right"><span class="online"><i></i> DEMO / 02</span><button id="reset" class="outline-button" disabled>↺ 重置试用</button></div>
+    <div class="header-right"><span class="online"><i></i> DEMO / 03</span><button id="model-settings" class="outline-button" disabled>模型设置</button><button id="reset" class="outline-button" disabled>↺ 重置试用</button></div>
   </header>
   <main>
     <div class="page-heading"><div><div class="eyebrow">ASTRAL WORKSHOP <span> / </span> 遗器培养</div><h1>让每一次强化，更有方向。</h1><p>选定你的目标角色，找到下一件值得投入的遗器。</p></div><div class="budget"><span class="budget-glyph">✧</span><div><small>剩余强化预算</small><strong id="budget">—</strong><span> / 8 步</span></div></div></div>
     <ol class="flow" aria-label="强化流程"><li id="step-target" class="active"><b>01</b> 选择角色</li><li id="step-select"><b>02</b> 挑选遗器</li><li id="step-upgrade"><b>03</b> 录入强化</li><li id="step-result"><b>04</b> 查看建议</li></ol>
     <div id="error" class="error-banner" role="alert" hidden></div>
     <div id="progress" class="progress-banner" role="status" hidden><span class="spinner"></span><span id="progress-text">正在重新评价遗器…</span><button id="cancel" class="text-button">取消本次计算</button></div>
+    <section class="agent-panel panel" aria-label="遗器培养 Agent">
+      <div class="agent-main">
+        <div class="panel-label"><span>培养 Agent <small class="agent-badge">LLM + TOOLS</small></span><small id="agent-model">等待配置</small></div>
+        <div id="agent-reply" class="agent-reply"><span class="agent-mark">✦</span><div><strong>用自然语言告诉我目标</strong><p>例如：我想培养 Blade，材料比较紧，帮我看看下一件最值得强化什么。</p></div></div>
+        <form id="agent-form" class="agent-form"><label for="agent-input" class="sr-only">培养目标</label><textarea id="agent-input" maxlength="4000" rows="2" placeholder="描述你已经决定培养的角色和要求…" required></textarea><button id="agent-submit" class="primary-button" type="submit">交给 Agent <span>↗</span></button></form>
+        <details id="agent-trace" class="agent-trace" hidden><summary>查看本轮 Agent → Tool 轨迹</summary><div id="agent-events"></div></details>
+      </div>
+      <aside class="usage-panel" aria-label="Token 和费用统计">
+        <div class="usage-heading"><span>用量与预算</span><small>REAL API USAGE</small></div>
+        <div class="usage-grid"><div><small>输入</small><strong id="usage-input">0</strong><span>tokens</span></div><div><small>输出</small><strong id="usage-output">0</strong><span>tokens</span></div><div><small>调用</small><strong id="usage-calls">0</strong><span>calls</span></div><div><small>累计费用</small><strong id="usage-cost">0</strong><span>配置价格单位</span></div></div>
+        <div class="token-budget"><div><span>Token Budget</span><b id="usage-budget-label">0 / 0</b></div><progress id="usage-budget" value="0" max="1"></progress><small>只使用 API 响应中的真实 usage，不估算。</small></div>
+      </aside>
+    </section>
     <div class="workbench">
       <aside class="character-panel panel"><div class="panel-label"><span>培养目标</span><small>CHARACTER</small></div><div id="characters" class="character-buttons"></div><div id="character-art" class="character-art"><div class="orbit"></div><div class="character-placeholder">✧<p>选择一位同行者</p><small>本次只围绕一个角色培养</small></div></div><div id="character-caption" class="character-caption"><small>YOUR NEXT UPGRADE</small><h2>从一个目标开始</h2><p>从账号库存出发，让已有的遗器发挥价值。</p></div></aside>
       <section class="inventory-panel panel" aria-label="遗器列表"><div class="panel-label"><span>遗器候选</span><small id="inventory-count">12 RELICS</small></div><div class="tabs" role="tablist"><button id="tab-ranked" role="tab" aria-selected="true">优先推荐 <span id="rank-count">0</span></button><button id="tab-all" role="tab" aria-selected="false">全部库存</button></div><div class="list-caption" id="list-caption">选择目标后，查看适合这位角色的强化候选。</div><div id="relic-list" class="relic-list"><div class="empty"><span>◇</span><p>推荐将在这里出现</p><small>先在左侧选择刃或希儿</small></div></div><div class="inventory-footer"><span id="evaluator-label">等待连接</span><span>库存来自模拟账号</span></div></section>
@@ -31,4 +44,14 @@
   </main>
   <dialog id="reset-dialog"><div class="eyebrow">NEW OBSERVATION</div><h2>重新开始本次试用？</h2><p>当前标签页的强化记录与选择将清空，恢复最初的 12 件遗器和 8 步预算。</p><div class="dialog-actions"><button id="reset-no" class="outline-button">保留当前进度</button><button id="reset-yes" class="primary-button">确认重置</button></div></dialog>
   <dialog id="guide-dialog"><div class="eyebrow">QUICK START</div><h2>一轮强化，四个步骤</h2><ol class="guide"><li>选择刃或希儿，查看推荐。</li><li>点击遗器卡片，查看评分、潜力与副属性。全部库存里也可以手动选择候选。</li><li>录入这一次新增的副属性或属性增量，例如暴击率增加 3.24 个百分点。</li><li>查看 Continue / Hold / Stop 的原因，继续当前件，或观察新的推荐。</li></ol><p>想试试暂停流程？选择刃 → 全部库存 → 9100001，新增防御力% +5.4；之后再次选择它恢复观察，再录入防御力% +5.4。</p><p class="muted">这里录入的是模拟观察。已有四条词条时只能强化其中一条；只有三条时，需要新增第四条。</p><button id="guide-close" class="primary-button">开始观察</button></dialog>
+  <dialog id="model-dialog" class="model-dialog"><div class="eyebrow">MODEL CONFIG / R3</div><h2>模型设置</h2><form id="model-form">
+    <label>API Endpoint<input id="config-endpoint" type="url" required placeholder="https://api.openai.com/v1"></label>
+    <label>API Key<input id="config-key" type="password" autocomplete="new-password" placeholder="留空则保留服务端现有 Key"></label><label class="checkbox-row"><input id="config-clear-key" type="checkbox"> 清除已保存的 API Key</label>
+    <label>Model<input id="config-model" required placeholder="模型 ID"></label>
+    <div class="config-grid"><label>Context Length<input id="config-context" type="number" min="256" max="2000000" required></label><label>Reasoning Mode<select id="config-reasoning"><option value="disabled">Disabled / 不发送</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label></div>
+    <div class="config-grid"><label>Input Price / 1M tokens<input id="config-input-price" type="number" min="0" step="any" required></label><label>Output Price / 1M tokens<input id="config-output-price" type="number" min="0" step="any" required></label></div>
+    <label>Token Budget<input id="config-token-budget" type="number" min="1" step="1" required></label>
+    <p class="model-note">价格使用你填写的同一货币单位。Key 只写入当前服务端内存会话，不写入浏览器存储、日志或普通响应。本地无鉴权服务可留空。</p>
+    <div id="model-error" class="dialog-error" role="alert" hidden></div><div class="dialog-actions"><button id="model-cancel" type="button" class="outline-button">取消</button><button class="primary-button" type="submit">保存配置</button></div>
+  </form></dialog>
 </body></html>

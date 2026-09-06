@@ -200,3 +200,29 @@ async fn targets_differ_and_sessions_and_reset_are_isolated() {
     let (_, progress) = request(&app, "GET", "/api/progress", &b, Value::Null).await;
     assert_eq!(progress["running"], false);
 }
+
+#[tokio::test]
+async fn model_config_is_server_side_and_secret_is_never_returned() {
+    let app = app();
+    let (token, state) = session(&app).await;
+    let body = json!({
+        "expected_revision":state["revision"],
+        "endpoint":"http://localhost:1234/v1",
+        "api_key":"super-secret-value",
+        "clear_api_key":false,
+        "model":"local-model",
+        "context_length":8192,
+        "reasoning_mode":"medium",
+        "input_price_per_million":1.25,
+        "output_price_per_million":5.0,
+        "token_budget":12345
+    });
+    let (status, configured) = request(&app, "POST", "/api/model-config", &token, body).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(configured["model_config"]["api_key_configured"], true);
+    assert_eq!(configured["model_config"]["model"], "local-model");
+    assert_eq!(configured["model_config"]["token_budget"], 12345);
+    assert!(!configured.to_string().contains("super-secret-value"));
+    let (_, reread) = request(&app, "GET", "/api/state", &token, Value::Null).await;
+    assert!(!reread.to_string().contains("super-secret-value"));
+}

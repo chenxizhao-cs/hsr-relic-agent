@@ -55,6 +55,7 @@ impl<T: Evaluator + ?Sized> Evaluator for Box<T> {
 }
 
 /// Deliberately small heuristic, not Fribbels scoring, a probability model, or DPS.
+#[derive(Debug, Clone, Copy)]
 pub struct MockEvaluator;
 
 impl MockEvaluator {

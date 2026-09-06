@@ -1,186 +1,211 @@
 # HSR Relic Agent
 
-面向《崩坏：星穹铁道》的遗器管理与强化决策 Agent。
+一个面向《崩坏：星穹铁道》的遗器强化决策 Agent，也是清华大学 Rust 课程项目。
 
-用户已经知道自己要培养哪个角色。系统围绕这个用户指定的目标，结合账号遗器库存、该角色已有配装和本次培养的有限预算，回答两个核心问题：
+你先告诉系统准备培养哪位角色；系统会从模拟账号的遗器库存中推荐下一件值得强化的遗器。每次录入强化结果后，它会更新同一件遗器并重新判断：
 
-1. **库存中下一件值得为该角色强化的遗器是什么？**
-2. **当前遗器强化到这一阶段后，还值得继续投入吗？**
+- **Continue**：继续强化当前遗器；
+- **Hold**：暂时保留，先观察其他候选；
+- **Stop**：对当前角色停止投入，切换到其他遗器。
 
-项目为清华大学 Rust 课程 AI Agent 大作业。
+当前 Demo 支持 Blade（刃）和 Seele（希儿），既可以直接操作 Web 工作台，也可以让 LLM 通过 Agent Tools 设置目标并查询推荐。
 
-一次只处理一个目标角色的遗器强化。用户可以主动更换目标；系统暂不决定培养哪个角色，也不分配多个角色之间的资源。
+## 几分钟启动 Web Demo
 
-## 当前状态
+### 1. 准备环境
 
-项目目前已实现 **Demo v0.2：Rust + Fribbels Evaluator 的强化决策闭环**，保留 v0.1 MockEvaluator 作对照。
+需要：
 
-已经完成：
+- 支持 Rust 2024 Edition 的稳定版 Rust；
+- Node.js 22 或更高版本；
+- Git。
 
-- 上游开源项目调研；
-- Fribbels 可调用性验证；
-- HSR-Scanner v4 模拟账号数据构造与解析验证；
-- 初步系统设计；
-- 强化决策 Demo 数据准备；
-- 独立 Rust library、CLI 演示与核心逻辑测试。
-- 可供 CLI 和未来 GUI 复用的结构化遗器不可操作原因。
-- 真实遗器评分、满级潜力、六件参考 Build 面板与简化普攻指标；Rust 负责最终排序和决策。
-- 可供课堂试用的单页 Web Demo：与 CLI 共用 core，支持选择、强化观察、三种判断、预算、历史与重置。
-
-目前不接 LLM / 真实账号采集。评分和潜力来自固定 Fribbels 源码，预算与决策仍为演示启发式。**fixture 对应的旧版 Blade / Seele 在当前上游只有简化普通攻击实现，不能把该伤害指标当作完整实战收益。**
+项目不会把 1 GB 以上的第三方源码提交到本仓库。首次使用时，在项目根目录下载固定版本的 Fribbels：
 
 ```bash
-node adapters/fribbels/build.mjs
-cd hsr-relic-agent
-cargo test
-cargo test --features fribbels-integration
-cargo run
-cargo run -- --interactive
-cargo run -- --mock
+mkdir -p upstream
+git clone https://github.com/fribbels/hsr-optimizer.git upstream/hsr-optimizer
+git -C upstream/hsr-optimizer checkout df630a0488a64eeb740e4e0c14f265d96b9f6f8f
+npm ci --prefix upstream/hsr-optimizer
 ```
 
-首次缺少上游依赖时先运行 `npm ci --prefix upstream/hsr-optimizer`。默认模式不会在 Adapter 失败时悄悄退回 Mock。构建、协议与限制见 [Adapter 说明](adapters/fribbels/README.md)。
+Adapter 会检查上游 commit 和工作区是否干净，不会修改 Fribbels 业务源码。
 
-操作方法、模块和规则见 [`hsr-relic-agent/README.md`](./hsr-relic-agent/README.md)。
-
-### Web 试用
+### 2. 准备 Adapter 和页面资源
 
 ```bash
 node web/prepare.mjs
+```
+
+这一步会构建薄 Fribbels Adapter，并从上游 Assets 层生成当前 Demo 使用的角色、遗器和属性图片映射。
+
+### 3. 启动
+
+```bash
 cargo run --manifest-path hsr-relic-web/Cargo.toml
 ```
 
-打开 <http://127.0.0.1:3000>。同一局域网试用可添加 `-- --lan`，同学使用主机局域网 IP 访问。每个独立会话使用模拟账号；不面向公网部署。启动、观察样例和资源来源见 [Web Demo 说明](web/README.md)。
+浏览器打开：<http://127.0.0.1:3000>
 
-## 核心思路
+停止服务时按 `Ctrl+C`。如果 3000 端口被占用，可以先设置 `HSR_WEB_PORT=3001`。
 
-项目将现有开源工具作为独立能力使用，而不是基于其源码进行增量开发。
+## 怎么试玩
 
-Rust core / library 承担账号状态、候选排序、强化事件与决策、工具编排等业务逻辑。CLI 和当前 Web Demo 共用这一 core，前端与核心后端保持解耦。
+### 方式一：直接操作强化工作台
 
-```text
-用户指定角色、预算与约束
-   ↓ CLI 或 Web/API 输入
-Rust core：AccountState → 候选排序 → 推荐遗器
-   ↑                               ↓
-更新同一遗器 ← 录入一次强化结果 ← 玩家强化
-   ↓
-重新评估 → Continue / Hold / Stop → 必要时改推另一件遗器
-```
+1. 在左侧选择刃或希儿；
+2. 中间会显示 Rust Decision Engine 排序后的遗器候选；
+3. 点击一件遗器，查看当前评分、副属性和平均满级潜力；
+4. 选择本次变化的副属性并填写增量；
+5. 点击“记录强化结果”，查看 Continue / Hold / Stop、原因和新的推荐；
+6. 需要重新开始时，点击右上角“重置试用”。
 
-边界原则：
+输入的是**本次增加量**，不是强化后的总值。百分比属性填写百分点，例如暴击率增加 `3.24`。
 
-- core 使用自己的内部模型和结构化结果，可脱离界面独立调用和测试。
-- 数值评价通过 `Evaluator` 抽象调用；v0.2 的 FribbelsEvaluator 经独立 Node Adapter 接入，MockEvaluator 保留为显式对照。
-- Reliquary / HSR-Scanner 等外部数据通过导入边界转换为 `AccountState`，业务层不直接依赖第三方 schema 或网页状态。
-- 后续 LLM 理解已指定角色的培养约束、编排工具并解释结果；确定性计算和状态更新由 Rust core 及其工具完成。
-- 当前 Web 采用独立原生前端和薄 Rust API；不预设后续完整 GUI 或 Agent 的具体结构。
+可以用下面这组操作快速观察三种判断：
 
-详细设计见 [`DESIGN.md`](./DESIGN.md)。
+1. 选择刃；
+2. 选择手部 `#9100002`，录入暴击率 `+3.24`，观察 Continue；
+3. 在“全部库存”选择头部 `#9100001`，录入防御力% `+5.4`，观察 Hold；
+4. 再次选择同一件遗器以恢复观察，再录入防御力% `+5.4`，观察 Stop 和改推另一件遗器。
 
-## Workspace
+### 方式二：使用自然语言 Agent
 
-```text
-hsr-relic-agent-workspace/
-├── AGENTS.md
-├── DESIGN.md
-├── README.md
-├── hsr-relic-agent/       # 独立 Rust package：library + CLI + tests
-├── hsr-relic-web/         # Rust Web/API：会话、DTO、传输适配
-├── web/                   # 独立单页与 Fribbels 视觉 AssetProvider
-├── adapters/fribbels/    # 我们的 JSON ↔ Fribbels 薄 Adapter
-│
-├── fixtures/
-│   ├── README.md
-│   ├── scanner-v4-minimal.json
-│   └── scanner-v4-demo.json
-│
-├── research/
-│   ├── upstream-index.md
-│   ├── fribbels-integration-spike.md
-│   └── spikes/
-│
-└── upstream/
-    ├── hsr-optimizer/
-    ├── reliquary-archiver/
-    ├── HSR-Scanner/
-    └── HSR_Nous/
-```
+点击右上角“模型设置”，配置 OpenAI-compatible 模型，然后在页面上方输入：
 
-`upstream/` 中均为第三方开源项目，不修改其业务源码。
+> 我想培养 Blade，材料比较紧，帮我看看下一件最值得强化什么。
 
-## 模拟数据
+Agent 会调用 Rust Tools 设置目标并查询推荐。页面可以展开查看本轮模型请求、Tool 输入输出和真实 Token usage。
 
-`fixtures/` 中目前提供两套 HSR-Scanner v4 数据：
-
-### `scanner-v4-minimal.json`
-
-用于验证数据格式和 importer。
-
-包含：
-
-- 1 个角色；
-- 1 件光锥；
-- 3 件遗器。
-
-### `scanner-v4-demo.json`
-
-用于当前强化决策 Demo。
-
-包含：
-
-- Blade；
-- Seele；
-- 2 件光锥；
-- 12 件处于不同强化阶段、具有不同培养价值的遗器。
-
-Blade / Seele 用于验证不同用户指定目标会改变候选排序，不代表系统会推荐角色培养顺序。
-
-两份数据均已经通过当前 Fribbels `KelzFormatParser` 实际解析验证。
-
-详细说明见 [`fixtures/README.md`](./fixtures/README.md)。
-
-## 上游项目
-
-| 项目 | 在本项目中的定位 |
-|---|---|
-| Fribbels HSR Optimizer | 已通过 Evaluator Adapter 提供遗器评分、潜力、参考 Build 面板及有限的伤害指标 |
-| Reliquary Archiver | 真实账号数据导入候选 |
-| HSR-Scanner | v4 JSON 数据格式及备用数据导入 |
-| HSR_Nous | 保留已有调研作参考，当前无集成计划 |
-
-源码与接口索引见：
-
-[`research/upstream-index.md`](./research/upstream-index.md)
-
-Fribbels 集成实验见：
-
-[`research/fribbels-integration-spike.md`](./research/fribbels-integration-spike.md)
-
-## 下一步
-
-Demo v0.2 已在同一模拟账号上接入真实 Evaluator，保持：
+LLM 不自己计算遗器分数，也不重新实现候选排序。完整链路是：
 
 ```text
-加载账号
-→ 用户指定目标角色
-→ 推荐候选遗器
-→ 输入一次强化结果
-→ 更新 AccountState
-→ Continue / Hold / Stop
-→ 必要时改推另一件遗器
+Web UI
+  → Rust Web API
+  → Agent Runtime
+  → Agent Tools
+  → Rust Decision Engine
+  → Fribbels Evaluator
 ```
 
-后续迭代保持单目标角色范围：
+Fribbels 提供确定性评分和 Build 数值，Rust 决定候选顺序及 Continue / Hold / Stop，LLM 只负责理解目标、选择工具和解释结构化结果。
 
-1. 评价迭代：优先明确角色技能版本与完整参考配装，验证更有代表性的单角色伤害指标，再校准当前启发式；真实资源成本与更广泛导入仍待后续。
-2. v0.3：接入该角色强化任务的 LLM 交互与工具编排，完善历史、配置、进度/打断及 Token/费用管理等课程要求。
-3. 在现有 Web Demo 上按需完善交互与持久化，继续复用同一 core。
+## 模型设置与 Token 费用
 
-角色培养优先级、多角色资源分配和全账号库存清理不在当前计划内；重置资源决策、完整队伍模拟和复杂概率模型也暂不排期。
+Web 设置支持：
 
-## 开源与课程要求
+- API Endpoint；
+- API Key；
+- Model；
+- Context Length；
+- Reasoning Mode；
+- Input / Output Token Price；
+- Token Budget。
 
-第三方源码、算法和数据的使用遵循课程 Honor Code。
+API Key 只保存在当前 Rust 服务的内存会话中，不写入浏览器存储或普通 API 响应。价格由使用者按自己的服务填写，单位是“所选货币 / 1M tokens”；默认价格为 0，项目不会内置可能过期的价格。
 
-开发规则与课程约束见 [`AGENTS.md`](./AGENTS.md)。
+每次成功的模型响应必须包含真实 input/output usage。系统不会自行估算 Token；累计用量达到预算后，会在下一次模型请求发出前停止。
+
+也可以在启动前通过环境变量设置默认值：
+
+```bash
+export HSR_LLM_API_ENDPOINT="https://api.openai.com/v1"
+export HSR_LLM_API_KEY="<your-api-key>"
+export HSR_LLM_MODEL="<model-id>"
+export HSR_LLM_CONTEXT_LENGTH="4096"
+export HSR_LLM_REASONING_MODE="disabled"
+export HSR_LLM_INPUT_PRICE_PER_MILLION="0"
+export HSR_LLM_OUTPUT_PRICE_PER_MILLION="0"
+export HSR_LLM_TOKEN_BUDGET="20000"
+```
+
+本地无鉴权的 OpenAI-compatible 服务可以留空 API Key。不同服务对 `reasoning_effort` 和 `max_completion_tokens` 的支持可能不同；不支持思考参数时选择 Disabled。
+
+> 当前服务只适合本机或可信局域网课堂演示，没有登录、TLS、数据库或生产级限流。不要把它直接暴露到公网，也不要通过不受信任的明文页面提交 API Key。
+
+## CLI Demo
+
+如果只想查看确定性强化闭环：
+
+```bash
+node adapters/fribbels/build.mjs
+cargo run --manifest-path hsr-relic-agent/Cargo.toml
+```
+
+交互模式和 Mock 对照模式：
+
+```bash
+cargo run --manifest-path hsr-relic-agent/Cargo.toml -- --interactive
+cargo run --manifest-path hsr-relic-agent/Cargo.toml -- --mock
+```
+
+## 测试
+
+先运行一次 `node web/prepare.mjs`，然后：
+
+```bash
+cargo test --manifest-path hsr-agent-runtime/Cargo.toml
+cargo test --manifest-path hsr-relic-web/Cargo.toml
+cargo test --manifest-path hsr-relic-agent/Cargo.toml --features fribbels-integration
+```
+
+完整的 Agent HTTP 协议 → Rust Tools → 真实 Fribbels 端到端测试是显式运行项：
+
+```bash
+cargo test --manifest-path hsr-relic-web/Cargo.toml --test agent_e2e -- --ignored
+```
+
+该测试的模型端是本机脚本化 OpenAI-compatible 服务，用于复现协议、usage、费用和预算行为，不代表真实模型的语言质量测试。
+
+## 当前版本边界
+
+Demo v0.3 已实现：
+
+- 自有 Rust `AccountState` 和强化状态更新；
+- Fribbels 遗器当前评分、平均满级潜力及参考 Build 数值；
+- Rust 候选排序和 Continue / Hold / Stop；
+- Web 与 CLI 共用同一个 core；
+- LLM Tool 调用、模型配置、真实 Token usage、费用和 Token Budget；
+- 内存会话中的强化历史和最近一次 Agent 轨迹。
+
+仍未实现：
+
+- 真实游戏账号导入；
+- 完整角色技能、完整队伍 DPS 或最终概率模型；
+- R4 完整实时事件流和可立即中止的模型网络请求；
+- R5 多轮上下文、历史任务持久化与保存/加载；
+- 公网部署所需的认证、TLS 和密钥管理。
+
+旧版 Blade / Seele 的当前伤害指标只是 Fribbels 中的简化普通攻击参考，不能视为完整实战收益。当前强化步数、阈值和 fixture 都是课堂 Demo 假设。
+
+## 项目结构
+
+```text
+hsr-relic-agent/       Rust core、Decision Engine、Evaluator、CLI
+hsr-agent-runtime/     ModelConfig、Provider、Agent Tools、usage/budget
+hsr-relic-web/         薄 Rust Web/API 与内存会话
+web/                   独立前端与 AssetProvider
+adapters/fribbels/     自有 JSON ↔ Fribbels 薄 Adapter
+fixtures/              HSR-Scanner v4 模拟账号
+research/              上游源码与接口索引、集成实验记录
+upstream/              本地第三方 checkout，不提交到本仓库
+```
+
+更详细的实现说明：
+
+- [系统设计](DESIGN.md)
+- [Web Demo 说明](web/README.md)
+- [Agent Runtime](hsr-agent-runtime/README.md)
+- [Rust core 与 CLI](hsr-relic-agent/README.md)
+- [Fribbels Adapter](adapters/fribbels/README.md)
+- [模拟数据](fixtures/README.md)
+- [上游源码索引](research/upstream-index.md)
+
+## 第三方项目与致谢
+
+- [Fribbels HSR Optimizer](https://github.com/fribbels/hsr-optimizer)：遗器评分、Build 计算和视觉资源映射；代码采用 MIT License。
+- [HSR-Scanner](https://github.com/kel-z/HSR-Scanner)：v4 模拟数据格式参考。
+- [Reliquary Archiver](https://github.com/IceDynamix/reliquary-archiver)：未来真实账号导入候选，本版本未集成。
+- [HSR_Nous](https://github.com/pzc2004/HSR_Nous)：仅保留调研参考，本版本未集成。
+
+本仓库不提交第三方源码或生成出的游戏图片资源，也没有修改 `upstream/` 中的第三方业务源码。游戏名称、角色和美术资源权利归原权利人所有；本项目为非官方课堂 Demo。

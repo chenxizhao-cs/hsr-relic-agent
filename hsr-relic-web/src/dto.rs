@@ -57,11 +57,14 @@ pub(super) fn snapshot(data: &SessionData) -> ApiResult<Value> {
     let history: Vec<_> = a.history.iter().map(|r| json!({"character_id":r.goal.character_id,"relic_id":r.after.id,
         "before_level":r.before.level,"after_level":r.after.level,"stat":r.result.stat,"increase":r.result.increase,
         "decision":decision(r.decision),"reason":r.reason})).collect();
+    let usage = data.usage.summary();
     Ok(
         json!({"revision":data.revision,"evaluator":data.evaluator.name(),"characters":characters,
         "target_id":e.goal().map(|g| &g.character_id),"selected_id":e.selected().map(|r| &r.id),
         "inventory":inventory,"recommendations":recommendations,"selected_evaluation":selected_evaluation,
-        "remaining_budget":a.upgrade_steps,"history":history,"last_result":data.last_result}),
+        "remaining_budget":a.upgrade_steps,"history":history,"last_result":data.last_result,
+        "model_config":data.model_config.view(),"usage":{"summary":usage,"calls":data.usage.records()},
+        "last_agent":data.last_agent}),
     )
 }
 

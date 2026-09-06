@@ -1,3 +1,4 @@
+use hsr_agent_runtime::ModelConfig;
 use hsr_relic_web::{App, router};
 use std::path::PathBuf;
 
@@ -34,10 +35,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if host == "0.0.0.0" {
         println!("已开启局域网访问；同学可使用本机局域网 IP 与端口 {port}，每个标签页独立试用。");
     }
-    axum::serve(listener, router(App::new(mock), root))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+    let model_config =
+        ModelConfig::from_env().map_err(|error| format!("模型环境配置无效：{error}"))?;
+    axum::serve(
+        listener,
+        router(App::with_model_config(mock, model_config), root),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await?;
     Ok(())
 }

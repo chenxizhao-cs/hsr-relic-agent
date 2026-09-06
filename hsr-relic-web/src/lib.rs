@@ -7,6 +7,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use hsr_agent_runtime::{
+    AgentRuntime, ModelConfig, ModelConfigPatch, OpenAiCompatibleProvider, RuntimeError,
+    UsageLedger,
+};
 use hsr_relic_agent::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -71,6 +75,9 @@ struct SessionData {
     evaluator: WebEvaluator,
     revision: u64,
     last_result: Option<Value>,
+    model_config: ModelConfig,
+    usage: UsageLedger,
+    last_agent: Option<hsr_agent_runtime::AgentRun>,
 }
 struct Session {
     data: Mutex<SessionData>,
@@ -84,12 +91,17 @@ struct Session {
 pub struct App {
     sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
     mock: bool,
+    default_model_config: ModelConfig,
 }
 impl App {
     pub fn new(mock: bool) -> Self {
+        Self::with_model_config(mock, ModelConfig::default())
+    }
+    pub fn with_model_config(mock: bool, default_model_config: ModelConfig) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             mock,
+            default_model_config,
         }
     }
     fn session(&self, headers: &HeaderMap) -> ApiResult<Arc<Session>> {
@@ -120,6 +132,8 @@ pub fn router(app: App, root: PathBuf) -> Router {
         .route("/api/session", post(create_session))
         .route("/api/state", get(state))
         .route("/api/action", post(action))
+        .route("/api/model-config", post(update_model_config))
+        .route("/api/agent", post(agent))
         .route("/api/progress", get(progress))
         .route("/api/cancel", post(cancel))
         .route("/api/health", get(|| async { Json(json!({"ok":true})) }))
@@ -128,7 +142,7 @@ pub fn router(app: App, root: PathBuf) -> Router {
             ServeDir::new(root.join("upstream/hsr-optimizer/public/assets")),
         )
         .fallback_service(ServeDir::new(root.join("web")))
-        .layer(DefaultBodyLimit::max(8192))
+        .layer(DefaultBodyLimit::max(16384))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
@@ -201,6 +215,9 @@ async fn create_session(State(app): State<App>) -> ApiResult<Json<Value>> {
         evaluator,
         revision: 0,
         last_result: None,
+        model_config: app.default_model_config.clone(),
+        usage: UsageLedger::default(),
+        last_agent: None,
     };
     let snapshot = dto::snapshot(&data)?;
     let token = Uuid::new_v4().to_string();
@@ -336,6 +353,7 @@ fn execute(s: &Session, command: Command) -> ApiResult<Value> {
             staged.engine =
                 Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, staged.evaluator.clone());
             staged.last_result = None;
+            staged.last_agent = None;
         }
     }
     staged.revision += 1;
@@ -350,6 +368,155 @@ fn execute(s: &Session, command: Command) -> ApiResult<Value> {
     *committed = staged;
     *s.snapshot.lock().unwrap() = snapshot.clone();
     Ok(snapshot)
+}
+
+#[derive(Deserialize)]
+struct ModelConfigCommand {
+    expected_revision: u64,
+    #[serde(flatten)]
+    patch: ModelConfigPatch,
+}
+
+async fn update_model_config(
+    State(app): State<App>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<ModelConfigCommand>, axum::extract::rejection::JsonRejection>,
+) -> ApiResult<Json<Value>> {
+    let command = payload
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_model_config",
+                "模型配置格式不正确。",
+            )
+        })?
+        .0;
+    let session = app.session(&headers)?;
+    let mut data = session.data.lock().unwrap();
+    if data.revision != command.expected_revision {
+        return Err(stale_revision());
+    }
+    data.model_config.apply(command.patch).map_err(|message| {
+        ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_model_config",
+            message,
+        )
+    })?;
+    data.revision += 1;
+    let snapshot = dto::snapshot(&data)?;
+    *session.snapshot.lock().unwrap() = snapshot.clone();
+    Ok(Json(snapshot))
+}
+
+#[derive(Deserialize)]
+struct AgentCommand {
+    expected_revision: u64,
+    input: String,
+}
+
+async fn agent(
+    State(app): State<App>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<AgentCommand>, axum::extract::rejection::JsonRejection>,
+) -> ApiResult<Json<Value>> {
+    let command = payload
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_agent_input",
+                "Agent 输入格式不正确。",
+            )
+        })?
+        .0;
+    let session = app.session(&headers)?;
+    if session
+        .running
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "busy",
+            "上一项操作仍在进行，请稍候或取消。",
+        ));
+    }
+    session.cancelled.store(false, Ordering::SeqCst);
+    *session.started.lock().unwrap() = Some(Instant::now());
+    tokio::task::spawn_blocking(move || {
+        let result = execute_agent(&session, command);
+        *session.started.lock().unwrap() = None;
+        session.running.store(false, Ordering::SeqCst);
+        result.map(Json)
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "worker_failed",
+            "Agent 任务异常，请稍后重试。",
+        )
+    })?
+}
+
+fn execute_agent(session: &Session, command: AgentCommand) -> ApiResult<Value> {
+    let mut data = session.data.lock().unwrap();
+    if data.revision != command.expected_revision {
+        return Err(stale_revision());
+    }
+    let before_calls = data.usage.summary().calls;
+    let mut engine = data.engine.clone();
+    let config = data.model_config.clone();
+    let runtime = AgentRuntime::new(OpenAiCompatibleProvider::default());
+    let result = runtime.run(
+        &command.input,
+        &config,
+        &mut data.usage,
+        &mut engine,
+        &session.cancelled,
+    );
+    match result {
+        Ok(run) => {
+            data.engine = engine;
+            data.last_agent = Some(run);
+            data.revision += 1;
+        }
+        Err(error) => {
+            if data.usage.summary().calls != before_calls {
+                data.revision += 1;
+            }
+            let snapshot = dto::snapshot(&data)?;
+            *session.snapshot.lock().unwrap() = snapshot;
+            return Err(agent_error(error));
+        }
+    }
+    let snapshot = dto::snapshot(&data)?;
+    *session.snapshot.lock().unwrap() = snapshot.clone();
+    Ok(snapshot)
+}
+
+fn stale_revision() -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "stale_revision",
+        "账号或配置已更新；页面已同步，请核对后重新操作。",
+    )
+}
+
+fn agent_error(error: RuntimeError) -> ApiError {
+    let (status, code) = match error {
+        RuntimeError::InvalidInput(_) => (StatusCode::BAD_REQUEST, "invalid_agent_input"),
+        RuntimeError::ModelNotConfigured => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "model_not_configured")
+        }
+        RuntimeError::BudgetReached { .. } => (StatusCode::CONFLICT, "token_budget_reached"),
+        RuntimeError::Cancelled => (StatusCode::CONFLICT, "cancelled"),
+        RuntimeError::Provider(_) => (StatusCode::BAD_GATEWAY, "model_provider_failed"),
+        RuntimeError::ToolLoopLimit => (StatusCode::UNPROCESSABLE_ENTITY, "tool_loop_limit"),
+        RuntimeError::MissingToolCall => (StatusCode::UNPROCESSABLE_ENTITY, "tool_call_required"),
+        RuntimeError::MissingReply => (StatusCode::UNPROCESSABLE_ENTITY, "model_reply_missing"),
+    };
+    ApiError::new(status, code, error.to_string())
 }
 
 async fn progress(State(app): State<App>, headers: HeaderMap) -> ApiResult<Json<Value>> {

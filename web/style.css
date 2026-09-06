@@ -935,6 +935,212 @@ input:focus,select:focus {
 .history-panel {
   margin-top: 20px;
 }
+.agent-panel {
+  display: grid;
+  grid-template-columns: minmax(0,1.7fr) minmax(280px,.8fr);
+  margin-bottom: 20px;
+  overflow: visible;
+  border-color: #b69b6355;
+  background: linear-gradient(120deg,#282d3a,#1b222e 65%,#29283a);
+}
+.agent-main {
+  min-width: 0;
+  border-right: 1px solid #ffffff12;
+}
+.agent-badge {
+  margin-left: 10px;
+  padding: 3px 7px;
+  border: 1px solid #d4bc8055;
+  color: var(--gold)!important;
+}
+.agent-reply {
+  margin: 0 20px 14px;
+  min-height: 74px;
+  display: flex;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #ffffff12;
+  background: #12182488;
+}
+.agent-reply .agent-mark {
+  color: var(--gold);
+  font-size: 25px;
+}
+.agent-reply strong {
+  font-weight: 500;
+}
+.agent-reply strong small {
+  margin-left: 8px;
+  color: var(--gold);
+  font-size: 9px;
+}
+.agent-reply p {
+  margin: 7px 0 0;
+  color: #b7bfcc;
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+.agent-form {
+  display: flex;
+  gap: 10px;
+  padding: 0 20px 18px;
+}
+.agent-form textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 46px;
+  max-height: 160px;
+  border: 1px solid #4b5565;
+  background: #101722;
+  color: var(--text);
+  padding: 12px 14px;
+  line-height: 1.5;
+}
+.agent-form button {
+  min-width: 130px;
+}
+.agent-trace {
+  margin: 0 20px 18px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.agent-trace>summary {
+  cursor: pointer;
+  color: #aeb7c5;
+}
+.agent-trace>div {
+  margin-top: 10px;
+  border-top: 1px solid #ffffff10;
+}
+.agent-trace>div>div {
+  display: grid;
+  grid-template-columns: 54px minmax(0,1fr);
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #ffffff08;
+}
+.agent-trace b {
+  color: var(--gold);
+  font-weight: 500;
+}
+.agent-trace code,.agent-trace details {
+  grid-column: 2;
+  overflow-wrap: anywhere;
+}
+.agent-trace pre {
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px;
+  background: #10151e;
+  white-space: pre-wrap;
+}
+.usage-panel {
+  padding: 20px;
+}
+.usage-heading {
+  display: flex;
+  justify-content: space-between;
+  color: #d7dae2;
+}
+.usage-heading small {
+  color: #788497;
+  font-size: 8px;
+  letter-spacing: 1px;
+}
+.usage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin: 17px 0;
+}
+.usage-grid>div {
+  border: 1px solid #ffffff0e;
+  background: #11172270;
+  padding: 10px;
+}
+.usage-grid small,.usage-grid span {
+  display: block;
+  color: #7f899a;
+  font-size: 8px;
+}
+.usage-grid strong {
+  display: block;
+  color: var(--gold);
+  margin: 5px 0;
+  font-size: 18px;
+  font-weight: 500;
+}
+.token-budget>div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #9aa4b4;
+}
+.token-budget b {
+  font-weight: 400;
+  color: var(--gold);
+}
+.token-budget progress {
+  width: 100%;
+  height: 5px;
+  margin: 9px 0;
+  accent-color: var(--gold);
+}
+.token-budget small {
+  color: #737e90;
+  font-size: 8px;
+}
+.model-dialog label {
+  display: block;
+  color: #aeb7c5;
+  font-size: 10px;
+  margin: 12px 0;
+}
+.model-dialog input,.model-dialog select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px;
+  color: var(--text);
+  border: 1px solid #4a5362;
+  background: #111823;
+}
+.model-dialog .checkbox-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.model-dialog .checkbox-row input {
+  width: auto;
+  margin: 0;
+}
+.config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.model-note {
+  font-size: 9px!important;
+  color: #7f899a!important;
+}
+.dialog-error {
+  color: #ffc1be;
+  background: #442d37;
+  padding: 10px;
+  font-size: 10px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}
 .count-badge {
   border: 1px solid #515a68;
   color: var(--muted);
@@ -1167,6 +1373,13 @@ dialog p,dialog li {
   }
 }
 @media(max-width:940px) {
+  .agent-panel {
+    grid-template-columns: 1fr;
+  }
+  .agent-main {
+    border-right: 0;
+    border-bottom: 1px solid #ffffff12;
+  }
   .workbench {
     grid-template-columns: 1fr 1.2fr;
   }
@@ -1253,6 +1466,23 @@ dialog p,dialog li {
     font-size: 33px;
   }
   .header-right {
+    gap: 0;
+  }
+  #model-settings {
+    font-size: 0;
+  }
+  #model-settings:after {
+    content: "模型";
+    font-size: 10px;
+  }
+  .agent-form {
+    flex-direction: column;
+  }
+  .agent-form button {
+    width: 100%;
+  }
+  .config-grid {
+    grid-template-columns: 1fr;
     gap: 0;
   }
   .outline-button {

@@ -32,4 +32,10 @@ export class DemoApi {
   action(action, revision) {
     return this.request('action', { ...action, expected_revision: revision })
   }
+  agent(input, revision) {
+    return this.request('agent', { input, expected_revision: revision })
+  }
+  modelConfig(config, revision) {
+    return this.request('model-config', { ...config, expected_revision: revision })
+  }
 }

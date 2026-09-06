@@ -1,6 +1,6 @@
 # 项目设计
 
-本文描述当前范围与后续方向；已冻结的 Demo v0.1、v0.1.1 修订、当前 v0.2 与后续计划分别说明。
+本文描述当前范围与后续方向；已冻结的 Demo v0.1、v0.1.1 修订、v0.2 评价链路、当前 v0.3 Agent Runtime 与后续计划分别说明。
 
 ## 1. 项目定位与范围
 
@@ -54,7 +54,7 @@ Hold / Stop 后可改推同一目标角色的另一件候选；预算耗尽或�
  继续当前遗器 / 改推其他遗器 / 暂停本次投入
 ```
 
-业务闭环由 Rust core 执行。输入可来自当前 CLI 或 Web Demo；LLM 接入后参与理解约束、工具编排与解释。
+业务闭环由 Rust core 执行。输入可来自 CLI、Web 表单，也可由 v0.3 LLM Agent 理解自然语言后通过 Tool 调用；LLM 只参与理解、编排与解释。
 
 ## 4. 工程结构原则
 
@@ -80,11 +80,13 @@ Hold / Stop 后可改推同一目标角色的另一件候选；预算耗尽或�
 
 ### LLM Agent
 
-后续 LLM 负责理解用户已指定角色的培养要求、提取约束和偏好、选择工具、调整该角色的遗器强化计划，并解释结果。工具执行与状态更新流程由 Rust 承担。
+v0.3 的 LLM 负责理解用户已指定角色的培养要求、提取当前请求、选择工具并解释结果。工具执行与状态更新流程由 Rust 承担。
 
 例如：“给 Blade 选下一件值得强化的遗器，不要拆其他角色的装备；这件强化到 +9 后还值得继续吗？”
 
 LLM 不决定优先培养哪个角色，不分配多角色资源，也不直接计算遗器评分、伤害或强化收益。
+
+模型配置和 OpenAI-compatible 协议集中在独立 Provider 层；Agent Runtime 只依赖内部 `ModelProvider`、Tool 定义和 `DecisionEngine`。API Key 是服务端内存中的私密字段，公开 DTO 只暴露 `api_key_configured`。真实模型 usage 由 Provider 从响应读取后交给统一 ledger 记账，缺失 usage 的响应会被拒绝，不进行本地 token 估算。
 
 ## 5. 第三方项目定位
 
@@ -152,10 +154,34 @@ v0.1 没有真实 LLM、Fribbels 调用、真实资源成本或完整 Build 计�
 - 使用对照样例校准潜力/伤害加权、Continue / Hold / Stop 阈值，不把 v0.2 启发式当作最终结论。
 - 更广泛 scanner 导入、真实强化成本与 Reliquary 按后续任务范围接入。
 
-### v0.3：完善 Agent 交互与课程要求
+### v0.3：Minimal Agent Runtime（已实现）
 
-- 接入自然语言约束、工具编排和强化建议解释，围绕同一角色的强化任务工作。
-- 完善历史与上下文保存、模型配置、进度与打断、Token 与费用统计。
+```text
+Web UI
+  ↓
+Rust Web API
+  ↓
+Agent Runtime ─→ ModelProvider ─→ OpenAI-compatible API
+  ↓                    ↓
+Agent Tools       response usage → UsageLedger
+  ↓
+Existing DecisionEngine → Evaluator → Fribbels Adapter
+```
+
+- Agent 的首次模型请求强制要求 Tool call；只有至少完成一次 Tool 调用后才接受最终自然语言回复，最多六轮，避免无界循环。
+- Tool 层提供设置目标、查询状态、候选排序、下一件推荐和强化历史；其职责只是参数转换和结构化返回。
+- Agent 在 `DecisionEngine` 副本上执行，完整成功后才提交。模型或工具链错误不会留下半完成的账号状态；已经收到的真实 usage 仍然记账。
+- `ModelConfig` 支持 Endpoint、API Key、Model、Context Length、Reasoning Mode、输入/输出价格和 Token Budget，可由环境变量初始化，也可在 Web 会话内修改。
+- Provider 当前适配 OpenAI-compatible Chat Completions function tools。Context Length 在无历史的 v0.3 中作为请求的 `max_completion_tokens` 上限；真正的历史截断策略留给 R5。
+- `UsageLedger` 逐次记录响应 ID、模型、input/output/total tokens、时间和按配置价格计算的费用。累计 tokens 达到 budget 后，在下一次模型请求发出前终止；已经完成的确定性工具结果仍可返回。
+- Web 展示自然语言输入、最终回复、可展开的 Agent → Tool 事件、模型设置以及累计 usage/cost/budget。模型配置和遗器账号状态属于同一个内存会话。
+
+当前 `AgentEvent` 已表达开始、模型请求、usage、Tool 请求/完成、回复和预算阻断，可作为 R4/R5 的公共事件语义；本轮仍一次性返回 JSON，不是 SSE/WebSocket。`AgentRun` 保留本轮输入、回复和事件，但只保存最近一轮且不落盘。
+
+### R4 / R5 后续
+
+- R4：将 `AgentEvent` 改为实时事件通道，并使取消句柄能够中止正在等待的 HTTP 模型请求；现有轮询进度和请求边界取消不视为 R4 完整完成。
+- R5：持久化完整多轮 messages、每轮 `AgentRun`、Tool 输入输出与 `UsageLedger`，支持列出、保存和加载会话；当前仅内存保存遗器历史与最近一次 Agent 轨迹，不视为 R5 完整完成。
 - 课程硬性要求继续按 [AGENTS.md](AGENTS.md) 执行，业务范围收缩不取消这些要求。
 
 ### 按需考虑，暂不排期
@@ -180,5 +206,6 @@ v0.1 没有真实 LLM、Fribbels 调用、真实资源成本或完整 Build 计�
 1. 如何明确角色技能版本、补全实际配装与行迹，使 Build 伤害指标更有代表性。
 2. 如何用对照数据校准真实评分、Build 改善与成本在排序和决策中的作用。
 3. 接入真实账号后，为可靠更新状态还需哪些输入与校验。
+4. R5 多轮上下文采用何种持久化格式，以及不同模型的上下文窗口如何映射到统一裁剪策略。
 
-自有 JSON v1、结构化评价结果及外部失败回滚已在 v0.2 实现；后续继续以现有单目标闭环为基础迭代。
+自有 JSON v1、结构化评价结果及外部失败回滚已在 v0.2 实现；v0.3 在其上增加独立 Provider、Tool、Agent Event 与 usage ledger，后续继续以现有单目标闭环为基础迭代。

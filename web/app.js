@@ -36,7 +36,7 @@ const labels = { Continue: '继续强化', Hold: '暂缓投入', Stop: '停止�
 const percent = (stat) => !['hp', 'atk', 'def', 'speed'].includes(stat)
 const value = (stat, n) => `${number(n)}${percent(stat) ? '%' : ''}`
 const api = new DemoApi()
-let state, assets, tab = 'ranked', busy = false, timer
+let state, assets, tab = 'ranked', busy = false, timer, progressLabel = '正在处理'
 
 function img(src, cls = '', alt = '') {
   return `<img src="${esc(src)}" class="${cls}" alt="${esc(alt)}" loading="lazy">`
@@ -52,6 +52,7 @@ function render() {
   $('budget').textContent = state.remaining_budget
   $('evaluator-label').textContent = state.evaluator === 'Mock' ? '◇ Mock 对照模式' : '✦ Fribbels 评价'
   $('reset').disabled = busy
+  $('model-settings').disabled = busy
   $('characters').innerHTML = state.characters.map((c) =>
     `<button class="character-choice ${c.id === state.target_id ? 'selected' : ''}" data-target="${c.id}" ${busy ? 'disabled' : ''} aria-pressed="${
       c.id === state.target_id
@@ -78,6 +79,40 @@ function render() {
   renderDetail()
   renderResult()
   renderHistory()
+  renderAgent()
+}
+
+function renderAgent() {
+  const config = state.model_config
+  const usage = state.usage.summary
+  $('agent-model').textContent = `${config.model} · ${config.api_key_configured ? 'Key 已配置' : 'Key 未配置/本地模式'}`
+  $('usage-input').textContent = number(usage.input_tokens)
+  $('usage-output').textContent = number(usage.output_tokens)
+  $('usage-calls').textContent = number(usage.calls)
+  $('usage-cost').textContent = Number(usage.total_cost).toFixed(6)
+  $('usage-budget').max = Math.max(config.token_budget, 1)
+  $('usage-budget').value = Math.min(usage.total_tokens, config.token_budget)
+  $('usage-budget-label').textContent = `${number(usage.total_tokens)} / ${number(config.token_budget)}`
+  $('agent-input').disabled = busy
+  $('agent-submit').disabled = busy
+  const run = state.last_agent
+  if (!run) {
+    $('agent-reply').innerHTML = '<span class="agent-mark">✦</span><div><strong>用自然语言告诉我目标</strong><p>例如：我想培养 Blade，材料比较紧，帮我看看下一件最值得强化什么。</p></div>'
+    $('agent-trace').hidden = true
+    return
+  }
+  $('agent-reply').innerHTML = `<span class="agent-mark">✦</span><div><strong>Agent 回复 <small>${run.status === 'budget_reached' ? '预算已达' : '完成'}</small></strong><p>${esc(run.reply)}</p></div>`
+  $('agent-events').innerHTML = run.events.map((event) => {
+    if (event.type === 'run_started') return `<div><b>开始</b><span>${esc(event.user_input)}</span></div>`
+    if (event.type === 'model_request_started') return `<div><b>模型</b><span>发起第 ${event.call_index} 次请求</span></div>`
+    if (event.type === 'usage_recorded') return `<div><b>Usage</b><span>输入 ${number(event.call.input_tokens)} · 输出 ${number(event.call.output_tokens)} · 本次费用 ${Number(event.call.cost).toFixed(6)}</span></div>`
+    if (event.type === 'tool_requested') return `<div><b>Tool</b><span>${esc(event.name)}</span><code>${esc(JSON.stringify(event.arguments))}</code></div>`
+    if (event.type === 'tool_finished') return `<div><b>结果</b><span>${esc(event.name)}</span><details><summary>结构化输出</summary><pre>${esc(JSON.stringify(event.result, null, 2))}</pre></details></div>`
+    if (event.type === 'budget_blocked') return `<div><b>预算</b><span>达到 ${number(event.used_tokens)} / ${number(event.token_budget)}，停止新请求</span></div>`
+    if (event.type === 'assistant_reply') return '<div><b>回复</b><span>模型基于工具结果完成解释</span></div>'
+    return ''
+  }).join('')
+  $('agent-trace').hidden = false
 }
 function renderList() {
   $('rank-count').textContent = state.recommendations.length
@@ -198,12 +233,13 @@ async function perform(action) {
   busy = true
   $('error').hidden = true
   $('progress').hidden = false
-  $('progress-text').textContent = '正在重新评价遗器…'
+  progressLabel = '正在重新评价遗器'
+  $('progress-text').textContent = `${progressLabel}…`
   render()
   timer = setInterval(async () => {
     try {
       const p = await api.request('progress')
-      $('progress-text').textContent = `正在评价遗器 · 已等待 ${p.seconds} 秒`
+      $('progress-text').textContent = `${progressLabel} · 已等待 ${p.seconds} 秒`
     } catch { /* The action reports connectivity errors. */ }
   }, 700)
   let failed = false
@@ -228,6 +264,41 @@ async function perform(action) {
       $('increase').value = draft.increase
     }
     if (!failed && action.action === 'upgrade') $('result-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }
+}
+
+async function performAgent(input) {
+  if (busy) return
+  busy = true
+  progressLabel = 'Agent 正在理解目标并调用工具'
+  $('error').hidden = true
+  $('progress').hidden = false
+  $('progress-text').textContent = `${progressLabel}…`
+  render()
+  timer = setInterval(async () => {
+    try {
+      const p = await api.request('progress')
+      $('progress-text').textContent = `${progressLabel} · 已等待 ${p.seconds} 秒`
+    } catch { /* The Agent request reports connection errors. */ }
+  }, 700)
+  let failed = false
+  try {
+    state = await api.agent(input, state.revision)
+    tab = 'ranked'
+    $('agent-input').value = ''
+  } catch (e) {
+    failed = true
+    $('error').textContent = e.message
+    $('error').hidden = false
+    try {
+      state = await api.request('state')
+    } catch { /* Keep the last visible snapshot. */ }
+  } finally {
+    clearInterval(timer)
+    busy = false
+    $('progress').hidden = true
+    render()
+    if (failed) $('agent-input').value = input
   }
 }
 $('characters').addEventListener('click', (e) => {
@@ -256,6 +327,49 @@ $('reset-yes').onclick = () => {
 }
 $('guide-button').onclick = () => $('guide-dialog').showModal()
 $('guide-close').onclick = () => $('guide-dialog').close()
+$('agent-form').onsubmit = (event) => {
+  event.preventDefault()
+  performAgent($('agent-input').value)
+}
+$('model-settings').onclick = () => {
+  const config = state.model_config
+  $('config-endpoint').value = config.endpoint
+  $('config-key').value = ''
+  $('config-clear-key').checked = false
+  $('config-model').value = config.model
+  $('config-context').value = config.context_length
+  $('config-reasoning').value = config.reasoning_mode
+  $('config-input-price').value = config.input_price_per_million
+  $('config-output-price').value = config.output_price_per_million
+  $('config-token-budget').value = config.token_budget
+  $('model-error').hidden = true
+  $('model-dialog').showModal()
+}
+$('model-cancel').onclick = () => $('model-dialog').close()
+$('model-form').onsubmit = async (event) => {
+  event.preventDefault()
+  $('model-error').hidden = true
+  const patch = {
+    endpoint: $('config-endpoint').value.trim(),
+    api_key: $('config-key').value || null,
+    clear_api_key: $('config-clear-key').checked,
+    model: $('config-model').value.trim(),
+    context_length: Number($('config-context').value),
+    reasoning_mode: $('config-reasoning').value,
+    input_price_per_million: Number($('config-input-price').value),
+    output_price_per_million: Number($('config-output-price').value),
+    token_budget: Number($('config-token-budget').value),
+  }
+  try {
+    state = await api.modelConfig(patch, state.revision)
+    $('config-key').value = ''
+    $('model-dialog').close()
+    render()
+  } catch (e) {
+    $('model-error').textContent = e.message
+    $('model-error').hidden = false
+  }
+}
 $('cancel').onclick = async () => {
   try {
     await api.request('cancel', {})
