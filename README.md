@@ -31,6 +31,8 @@ npm ci --prefix upstream/hsr-optimizer
 
 Adapter 会检查上游 commit 和工作区是否干净，不会修改 Fribbels 业务源码。
 
+当前固定版上游在 `npm ci` 时可能显示 `i18next` patch 版本警告和 npm audit 提示；本项目已验证这些提示不阻止 Demo 构建和启动。不要直接在这个固定上游目录运行 `npm audit fix`，否则可能改动 lockfile，导致 Adapter 的干净工作区检查失败。
+
 ### 2. 准备 Adapter 和页面资源
 
 ```bash
