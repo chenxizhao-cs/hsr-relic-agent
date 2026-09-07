@@ -8,5 +8,8 @@
 <p>遗器计算调用 <a href="https://github.com/fribbels/hsr-optimizer">Fribbels HSR Optimizer</a>，固定版本 <code>df630a0488a64eeb740e4e0c14f265d96b9f6f8f</code>。头像、立绘、遗器和属性图标使用其仓库现有资源，通过实际 Assets 模块生成映射，再从本地提供图片。</p>
 <p>研究参考：<code>src/lib/rendering/assets.ts</code>、<code>RelicPreview.tsx</code> 与 <code>RelicStatRow.tsx</code>。本项目独立编写卡片和页面，不复制其业务组件、页面状态管理或整套前端。</p>
 <p>Fribbels 代码许可证为 <a href="https://github.com/fribbels/hsr-optimizer/blob/df630a0488a64eeb740e4e0c14f265d96b9f6f8f/LICENSE.md">MIT License</a>，Copyright (c) 2024 Fribbels。原版权和许可声明保留于 upstream 仓库；本地生成的打包产物不提交。若分发打包后的第三方代码，须同时保留其完整许可声明。MIT 代码许可不等于游戏美术的再授权。</p>
+<h2>游戏静态推荐数据</h2>
+<p>角色的套装、位面、主属性和副属性候选来自 <a href="https://github.com/DimbreathBot/TurnBasedGameData">DimbreathBot/TurnBasedGameData</a> 中的 <code>AvatarRelicRecommend.json</code>，固定 commit <code>8cdb905dc2f8e6fffa9be4eb07af3e34435d6091</code>。准备脚本会校验 SHA-256，再转换为本项目自己的 JSON；完整上游文件和生成数据库均不提交。</p>
+<p>该仓库是社区提取的游戏客户端配置，不是米哈游公开 API，且没有声明许可证。本项目记录来源并仅在用户本地生成；游戏数据权利归原权利人所有。静态推荐表示游戏配置中的候选，不等于玩家使用率或数学最优结论。</p>
 <h2>我们自己的边界</h2><p>页面只显示 Rust API 返回的结果。评分来自 Evaluator，排序与强化决策由 Rust core 完成。原生 HTML/CSS/JavaScript、Rust Web/API 层及 AssetProvider 均在本项目独立实现。模拟账号不关联任何真实玩家。</p>
 </main></body></html>

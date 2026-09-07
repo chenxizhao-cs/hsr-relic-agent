@@ -3,8 +3,9 @@ use std::io::{self, Write};
 use hsr_relic_agent::{
     DEMO_ACCOUNT, DecisionEngine, Error, EvaluationProgress, Evaluator, FribbelsConfig,
     FribbelsEvaluator, MockEvaluator, RelicOperationError, RelicSelection, Stat,
-    UpgradeRecommendation, UpgradeResult, load_scanner_v4,
+    UpgradeRecommendation, UpgradeResult, load_character_relic_database, load_scanner_v4,
 };
+use std::sync::Arc;
 
 type Engine = DecisionEngine<Box<dyn Evaluator>>;
 type CliResult<T> = std::result::Result<T, CliError>;
@@ -67,6 +68,13 @@ fn operation_message(error: &RelicOperationError) -> String {
             relic_id,
             character_id,
         } => format!("遗器 {relic_id} 正装备在其他角色 {character_id} 身上，当前规则不允许操作。"),
+        RelicOperationError::SetNotRecommendedForTarget {
+            relic_id,
+            character_id,
+            set_id,
+        } => format!(
+            "遗器 {relic_id} 的套装 {set_id} 未列入目标角色 {character_id} 的游戏静态推荐，不能作为本轮强化候选。"
+        ),
         RelicOperationError::StoppedForTarget {
             relic_id,
             character_id,
@@ -113,7 +121,7 @@ pub(crate) fn run() -> CliResult<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!(
-            "cargo run：Fribbels 自动演示；--interactive：交互操作；--mock：使用 v0.1 Mock 对照。\n先在 workspace 根目录执行 node adapters/fribbels/build.mjs。\n每次启动从同一 fixture 加载，内存状态不写回文件；Ctrl+C 中断。"
+            "cargo run：Fribbels 自动演示；--interactive：交互操作；--mock：使用 v0.1 Mock 对照。\n先在 workspace 根目录依次执行 node adapters/recommendations/prepare.mjs 和 node adapters/fribbels/build.mjs。\n每次启动从同一 fixture 加载，内存状态不写回文件；Ctrl+C 中断。"
         );
         return Ok(());
     }
@@ -142,12 +150,20 @@ pub(crate) fn run() -> CliResult<()> {
         };
         Box::new(FribbelsEvaluator::new(config))
     };
-    let mut engine = Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, evaluator);
+    let database_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../data/.generated/character-relic-recommendations-v1.json");
+    let database_json = std::fs::read_to_string(&database_path).map_err(|_| {
+        Error("缺少静态推荐数据库；请在 workspace 根目录执行 node adapters/recommendations/prepare.mjs".into())
+    })?;
+    let database = Arc::new(load_character_relic_database(&database_json)?);
+    let mut engine = Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, evaluator)
+        .with_recommendation_database(database.clone());
     println!(
-        "已加载 fixtures/scanner-v4-demo.json：{} 个角色 / {} 件遗器，预算 {} 步（一次 +3 消耗一步）。",
+        "已加载 fixtures/scanner-v4-demo.json：{} 个角色 / {} 件遗器，预算 {} 步；静态推荐数据库 {} 个角色。",
         engine.account().characters.len(),
         engine.account().relics.len(),
-        engine.account().upgrade_steps
+        engine.account().upgrade_steps,
+        database.len()
     );
     if interactive {
         interact(&mut engine)

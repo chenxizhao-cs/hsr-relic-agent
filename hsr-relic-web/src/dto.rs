@@ -35,6 +35,7 @@ pub(super) fn snapshot(data: &SessionData) -> ApiResult<Value> {
         let mut row = relic(r);
         row["blocked"] = json!(blocked);
         row["decision"] = json!(status);
+        row["set_match"] = json!(e.set_match(r));
         inventory.push(row);
     }
     let recommendations = if e.goal().is_some() {
@@ -43,6 +44,7 @@ pub(super) fn snapshot(data: &SessionData) -> ApiResult<Value> {
         vec![]
     };
     let recommendations: Vec<_> = recommendations.into_iter().map(|r| json!({"relic_id":r.relic_id,
+        "set_match":r.set_match,
         "current_score":r.current_score,"projected_score":r.projected_score,"baseline_score":r.baseline_score,
         "priority":r.priority,"reason":r.reason,"details":r.details})).collect();
     let selected_evaluation = match (e.goal(), e.selected()) {
@@ -88,6 +90,10 @@ pub(super) fn operation_error(error: &RelicOperationError) -> (&'static str, Str
         EquippedByOtherCharacter { .. } => (
             "equipped_elsewhere",
             "这件遗器已装备在其他角色身上。".into(),
+        ),
+        SetNotRecommendedForTarget { .. } => (
+            "set_not_recommended",
+            "这件遗器的套装未列入当前角色的游戏静态推荐。".into(),
         ),
         StoppedForTarget { .. } => (
             "stopped_for_target",

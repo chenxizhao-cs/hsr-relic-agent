@@ -102,6 +102,7 @@ pub struct App {
     sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
     mock: bool,
     default_model_config: ModelConfig,
+    recommendation_database: Option<Arc<CharacterRelicDatabase>>,
 }
 impl App {
     pub fn new(mock: bool) -> Self {
@@ -112,7 +113,12 @@ impl App {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             mock,
             default_model_config,
+            recommendation_database: None,
         }
+    }
+    pub fn with_recommendation_database(mut self, database: Arc<CharacterRelicDatabase>) -> Self {
+        self.recommendation_database = Some(database);
+        self
     }
     fn session(&self, headers: &HeaderMap) -> ApiResult<Arc<Session>> {
         let token = headers
@@ -228,8 +234,12 @@ async fn create_session(State(app): State<App>) -> ApiResult<Json<Value>> {
             },
         ))))
     };
+    let mut engine = Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, evaluator.clone());
+    if let Some(database) = &app.recommendation_database {
+        engine = engine.with_recommendation_database(database.clone());
+    }
     let data = SessionData {
-        engine: Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, evaluator.clone()),
+        engine,
         evaluator,
         revision: 0,
         last_result: None,
@@ -372,8 +382,12 @@ fn execute(s: &Session, command: Command) -> ApiResult<Value> {
             );
         }
         Action::Reset => {
+            let database = staged.engine.recommendation_database_handle();
             staged.engine =
                 Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, staged.evaluator.clone());
+            if let Some(database) = database {
+                staged.engine = staged.engine.with_recommendation_database(database);
+            }
             staged.last_result = None;
         }
     }
@@ -734,12 +748,15 @@ async fn import_session(
             )
         })?;
     let saved_engine = command.session.engine;
-    let engine = DecisionEngine::restore(
+    let mut engine = DecisionEngine::restore(
         saved_engine.account,
         data.evaluator.clone(),
         saved_engine.goal,
         saved_engine.selected_relic_id,
     )?;
+    if let Some(database) = data.engine.recommendation_database_handle() {
+        engine = engine.with_recommendation_database(database);
+    }
     let runs = command.session.tasks;
     let mut staged = SessionData {
         engine,

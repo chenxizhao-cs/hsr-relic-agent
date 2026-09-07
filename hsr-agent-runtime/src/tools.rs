@@ -170,6 +170,7 @@ fn recommendation<E: Evaluator>(
     let relic: Option<&Relic> = engine.account().relics.get(&recommendation.relic_id);
     json!({
         "relic_id":recommendation.relic_id,
+        "set_match":recommendation.set_match,
         "slot":relic.map(|r| r.slot),
         "set_id":relic.map(|r| &r.set_id),
         "level":relic.map(|r| r.level),

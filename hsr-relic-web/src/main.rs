@@ -1,6 +1,7 @@
 use hsr_agent_runtime::ModelConfig;
+use hsr_relic_agent::load_character_relic_database;
 use hsr_relic_web::{App, router};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,6 +16,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !root.join("web/.generated/assets.json").is_file() {
         return Err("请先在 workspace 根目录执行 node web/prepare.mjs".into());
     }
+    let recommendation_path = root.join("data/.generated/character-relic-recommendations-v1.json");
+    let recommendation_json = std::fs::read_to_string(&recommendation_path)
+        .map_err(|_| "缺少静态推荐数据库；请执行 node web/prepare.mjs")?;
+    let recommendation_database = Arc::new(load_character_relic_database(&recommendation_json)?);
     let mock = args.iter().any(|a| a == "--mock");
     if !mock && !root.join("adapters/fribbels/dist/adapter.mjs").is_file() {
         return Err("缺少 Fribbels Adapter；请执行 node web/prepare.mjs".into());
@@ -39,7 +44,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ModelConfig::from_env().map_err(|error| format!("模型环境配置无效：{error}"))?;
     axum::serve(
         listener,
-        router(App::with_model_config(mock, model_config), root),
+        router(
+            App::with_model_config(mock, model_config)
+                .with_recommendation_database(recommendation_database),
+            root,
+        ),
     )
     .with_graceful_shutdown(async {
         let _ = tokio::signal::ctrl_c().await;

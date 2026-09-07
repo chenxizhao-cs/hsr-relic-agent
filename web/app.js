@@ -186,7 +186,7 @@ function renderList() {
   $('rank-count').textContent = state.recommendations.length
   $('tab-ranked').setAttribute('aria-selected', tab === 'ranked')
   $('tab-all').setAttribute('aria-selected', tab === 'all')
-  $('list-caption').textContent = tab === 'ranked' ? '按本次目标的强化价值排序 · 点击选择' : '包含未推荐、暂缓及受保护的遗器'
+  $('list-caption').textContent = tab === 'ranked' ? '先按游戏静态套装推荐筛选，再按强化价值排序' : '包含未推荐、暂缓及受保护的遗器'
   const scores = new Map(state.recommendations.map((r) => [r.relic_id, r]))
   const inventory = new Map(state.inventory.map((r) => [r.id, r]))
   // Ordering comes from the API. The browser only joins display data by ID.
@@ -201,7 +201,13 @@ function renderList() {
         img(assets.relic(r), '', slots[r.slot])
       }<span>+${r.level}</span></div><div class="relic-info"><div class="relic-card-top"><span class="card-badge ${badge === '首选候选' ? 'gold' : ''}">${
         esc(badge)
-      }</span><small>#${r.id}</small></div><h3>${sets[r.set_id] ?? esc(r.set_id)}</h3><div class="relic-main">${img(assets.stat(r.main_stat))}${
+      }</span><small>#${r.id}</small></div><h3>${sets[r.set_id] ?? esc(r.set_id)}</h3>${
+        r.set_match === 'recommended'
+          ? '<small class="static-fit recommended">游戏静态推荐套装</small>'
+          : r.set_match === 'not_recommended'
+            ? '<small class="static-fit excluded">未列入该角色静态推荐</small>'
+            : ''
+      }<div class="relic-main">${img(assets.stat(r.main_stat))}${
         stats[r.main_stat]
       }</div><div class="mini-stats">${Object.entries(r.substats).map(([s, n]) => `<span>${stats[s]} ${value(s, n)}</span>`).join('')}</div>${
         score

@@ -1,4 +1,5 @@
 use crate::*;
+use std::sync::Arc;
 
 pub type RelicOperationResult<T> = std::result::Result<T, RelicOperationError>;
 
@@ -27,6 +28,11 @@ pub enum RelicOperationError {
     EquippedByOtherCharacter {
         relic_id: String,
         character_id: String,
+    },
+    SetNotRecommendedForTarget {
+        relic_id: String,
+        character_id: String,
+        set_id: String,
     },
     StoppedForTarget {
         relic_id: String,
@@ -85,6 +91,7 @@ pub struct DecisionEngine<E> {
     evaluator: E,
     goal: Option<CultivationGoal>,
     selected: Option<String>,
+    recommendation_database: Option<Arc<CharacterRelicDatabase>>,
 }
 
 impl<E: Evaluator> DecisionEngine<E> {
@@ -94,6 +101,7 @@ impl<E: Evaluator> DecisionEngine<E> {
             evaluator,
             goal: None,
             selected: None,
+            recommendation_database: None,
         }
     }
 
@@ -164,7 +172,28 @@ impl<E: Evaluator> DecisionEngine<E> {
             evaluator,
             goal,
             selected: selected_relic_id,
+            recommendation_database: None,
         })
+    }
+
+    pub fn with_recommendation_database(mut self, database: Arc<CharacterRelicDatabase>) -> Self {
+        self.recommendation_database = Some(database);
+        self
+    }
+
+    pub fn recommendation_database(&self) -> Option<&CharacterRelicDatabase> {
+        self.recommendation_database.as_deref()
+    }
+
+    pub fn recommendation_database_handle(&self) -> Option<Arc<CharacterRelicDatabase>> {
+        self.recommendation_database.clone()
+    }
+
+    pub fn set_match(&self, relic: &Relic) -> RecommendationMatch {
+        match (&self.recommendation_database, &self.goal) {
+            (Some(database), Some(goal)) => database.set_match(&goal.character_id, relic),
+            _ => RecommendationMatch::Unknown,
+        }
     }
 
     pub fn account(&self) -> &AccountState {
@@ -241,6 +270,19 @@ impl<E: Evaluator> DecisionEngine<E> {
                 character_id: character_id.clone(),
             });
         }
+        if self
+            .recommendation_database
+            .as_ref()
+            .is_some_and(|database| {
+                database.set_match(&goal.character_id, relic) == RecommendationMatch::NotRecommended
+            })
+        {
+            return Some(RelicOperationError::SetNotRecommendedForTarget {
+                relic_id: relic.id.clone(),
+                character_id: goal.character_id.clone(),
+                set_id: relic.set_id.clone(),
+            });
+        }
         None
     }
 
@@ -252,6 +294,17 @@ impl<E: Evaluator> DecisionEngine<E> {
                 .equipped_by
                 .as_ref()
                 .is_none_or(|id| id == &goal.character_id)
+    }
+
+    fn eligible_for_goal(&self, relic: &Relic, goal: &CultivationGoal) -> bool {
+        Self::eligible(relic, goal)
+            && self
+                .recommendation_database
+                .as_ref()
+                .is_none_or(|database| {
+                    database.set_match(&goal.character_id, relic)
+                        != RecommendationMatch::NotRecommended
+                })
     }
 
     fn evaluate(
@@ -302,6 +355,17 @@ impl<E: Evaluator> DecisionEngine<E> {
             return Err(Error("Evaluator 返回无效 Build 比较指标".into()));
         }
         let priority = (evaluation.projected_score - baseline).max(0.0) / remaining * damage_ratio;
+        let set_match = self
+            .recommendation_database
+            .as_ref()
+            .map_or(RecommendationMatch::Unknown, |database| {
+                database.set_match(&goal.character_id, relic)
+            });
+        let set_reason = match set_match {
+            RecommendationMatch::Recommended => "；套装在游戏静态推荐中",
+            RecommendationMatch::Unknown => "；当前角色没有静态套装数据",
+            RecommendationMatch::NotRecommended => "；套装未列入游戏静态推荐",
+        };
         let reason = format!(
             "{} 当前 {:.2}，预计满级 {:.2}，同部位参考基线 {:.2}；正收益 / 剩余 {:.0} 步 × Build 伤害比 {:.3} = {:.2}",
             self.evaluator.name(),
@@ -311,9 +375,10 @@ impl<E: Evaluator> DecisionEngine<E> {
             remaining,
             damage_ratio,
             priority
-        );
+        ) + set_reason;
         Ok(UpgradeRecommendation {
             relic_id: relic.id.clone(),
+            set_match,
             current_score: evaluation.current_score,
             projected_score: evaluation.projected_score,
             baseline_score: baseline,
@@ -333,7 +398,7 @@ impl<E: Evaluator> DecisionEngine<E> {
         }
         let mut candidates = vec![];
         for relic in account.relics.values() {
-            if !Self::eligible(relic, goal) {
+            if !self.eligible_for_goal(relic, goal) {
                 continue;
             }
             let status = account

@@ -1,10 +1,110 @@
 use crate::*;
+use std::sync::Arc;
+
+const DEMO_RECOMMENDATIONS: &str = r#"{
+  "schema_version": 1,
+  "source": {
+    "kind": "honkai_star_rail_client_config",
+    "repository_url": "https://example.invalid/source",
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "path": "AvatarRelicRecommend.json",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "profiles": [
+    {
+      "character_id": "1102",
+      "relic_set_ids": ["108", "122", "102"],
+      "ornament_set_ids": ["311", "301", "306"],
+      "main_stats": {
+        "body": ["crit_rate", "crit_damage"],
+        "feet": ["speed", "atk_percent"],
+        "sphere": ["quantum_damage", "atk_percent"],
+        "rope": ["atk_percent"]
+      },
+      "substats": ["crit_rate", "crit_damage", "atk_percent", "speed"]
+    },
+    {
+      "character_id": "1205",
+      "relic_set_ids": ["113", "110", "102"],
+      "ornament_set_ids": ["319", "306", "309"],
+      "main_stats": {
+        "body": ["crit_rate", "crit_damage"],
+        "feet": ["speed", "hp_percent"],
+        "sphere": ["wind_damage", "hp_percent"],
+        "rope": ["hp_percent"]
+      },
+      "substats": ["crit_rate", "crit_damage", "hp_percent", "speed"]
+    }
+  ]
+}"#;
 
 fn engine(steps: u32) -> DecisionEngine<MockEvaluator> {
     let mut engine =
         DecisionEngine::new(load_scanner_v4(DEMO_ACCOUNT, steps).unwrap(), MockEvaluator);
     engine.set_goal("1205").unwrap();
     engine
+}
+
+fn database() -> Arc<CharacterRelicDatabase> {
+    Arc::new(load_character_relic_database(DEMO_RECOMMENDATIONS).unwrap())
+}
+
+#[test]
+fn loads_versioned_static_recommendation_database() {
+    let database = database();
+    assert_eq!(database.schema_version(), 1);
+    assert_eq!(database.len(), 2);
+    assert_eq!(database.source().kind, "honkai_star_rail_client_config");
+    let seele = database.profile("1102").unwrap();
+    assert_eq!(seele.relic_set_ids, ["108", "122", "102"]);
+    assert_eq!(seele.main_stats.sphere[0], Stat::QuantumDamage);
+    assert!(seele.substats.contains(&Stat::CritRate));
+}
+
+#[test]
+fn static_database_filters_sets_for_the_selected_character() {
+    let mut engine = DecisionEngine::new(load_scanner_v4(DEMO_ACCOUNT, 8).unwrap(), MockEvaluator)
+        .with_recommendation_database(database());
+
+    engine.set_goal("1102").unwrap();
+    assert_eq!(
+        engine.set_match(&engine.account().relics["9100002"]),
+        RecommendationMatch::NotRecommended
+    );
+    assert_eq!(
+        engine.select_relic("9100002").unwrap_err(),
+        RelicOperationError::SetNotRecommendedForTarget {
+            relic_id: "9100002".into(),
+            character_id: "1102".into(),
+            set_id: "113".into(),
+        }
+    );
+    assert!(engine.rank_candidates().unwrap().iter().all(|candidate| {
+        matches!(candidate.set_match, RecommendationMatch::Recommended)
+            && matches!(
+                engine.account().relics[&candidate.relic_id].set_id.as_str(),
+                "108" | "309"
+            )
+    }));
+
+    engine.set_goal("1205").unwrap();
+    assert!(engine.rank_candidates().unwrap().iter().all(|candidate| {
+        matches!(candidate.set_match, RecommendationMatch::Recommended)
+            && matches!(
+                engine.account().relics[&candidate.relic_id].set_id.as_str(),
+                "113" | "306"
+            )
+    }));
+}
+
+#[test]
+fn unknown_character_profiles_do_not_exclude_relics() {
+    let database = database();
+    let relic = &load_scanner_v4(DEMO_ACCOUNT, 8).unwrap().relics["9100002"];
+    assert_eq!(
+        database.set_match("missing", relic),
+        RecommendationMatch::Unknown
+    );
 }
 
 fn upgrade(id: &str, level: u8, stat: Stat, increase: f64) -> UpgradeResult {

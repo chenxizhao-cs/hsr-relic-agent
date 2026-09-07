@@ -536,6 +536,16 @@ h1 {
 .card-badge.gold {
   color: var(--gold);
 }
+
+.static-fit {
+  display: block;
+  margin: -2px 0 8px;
+  font-size: 10px;
+  letter-spacing: .04em;
+}
+
+.static-fit.recommended { color: var(--green); }
+.static-fit.excluded { color: var(--muted); }
 .relic-info h3 {
   font-size: 13px;
   font-weight: 500;

@@ -13,7 +13,7 @@ node web/prepare.mjs
 cargo run --manifest-path hsr-relic-web/Cargo.toml
 ```
 
-打开 <http://127.0.0.1:3000>。准备脚本检查固定上游版本、构建已有计算 Adapter，并调用上游 Assets 生成资源清单，逐一检查图片存在。源码/fixture/上游版本变化后重新准备；平时只需启动 Rust 服务。修改前端后刷新页面。
+打开 <http://127.0.0.1:3000>。准备脚本先下载固定版本的游戏静态推荐表并转换为自有 JSON，再检查 Fribbels 版本、构建计算 Adapter，并调用上游 Assets 生成资源清单。源码/fixture/上游版本变化后重新准备；平时只需启动 Rust 服务。修改前端后刷新页面。
 
 让同一局域网的同学试用：
 
@@ -56,7 +56,8 @@ cargo run --manifest-path hsr-relic-web/Cargo.toml -- --lan
 | `index.html` / `style.css` / `app.js` | 独立角色面板、遗器卡片、观察表单、历史与结果展示；保留 API 返回的候选顺序 |
 | `api.js` | 同源 JSON 请求、会话令牌、错误传递 |
 | `asset-provider.js` | 界面唯一图片入口；只读生成的资源映射 |
-| `asset-manifest.ts` / `prepare.mjs` | 构建时调用真正的上游 Assets，生成 `.generated/assets.json`，不手工维护图片 URL |
+| `asset-manifest.ts` / `prepare.mjs` | 准备静态推荐数据库，并调用真正的上游 Assets 生成 `.generated/assets.json` |
+| `../adapters/recommendations/` | 固定游戏静态配置 → 自有版本化推荐 JSON；校验来源 commit、SHA-256 与字段完整性 |
 | `../hsr-relic-web/src/lib.rs` | 薄 API、会话内存、SSE、版本化保存/加载、动作串行化与取消 |
 | `../hsr-relic-web/src/dto.rs` | 内部模型到 Web 展示 DTO；结构化错误到中文提示 |
 | `../hsr-agent-runtime/` | ModelConfig、OpenAI-compatible Provider、Agent Runtime、薄 Tool Layer、AgentEvent 与 UsageLedger |
@@ -84,7 +85,7 @@ cargo run --manifest-path hsr-relic-web/Cargo.toml -- --lan
 {"action":"upgrade","expected_revision":2,"relic_id":"9100002","expected_level":3,"stat":"crit_rate","increase":3.24}
 ```
 
-响应包含 `revision / target_id / selected_id / inventory / recommendations / selected_evaluation / remaining_budget / history / last_result / model_config / usage / last_agent`。`model_config` 不含 Key；`usage` 来自服务端 ledger。分值、排序、限制和决策由 Rust 提供；前端只做字段格式化、ID 联结和交互。
+响应包含 `revision / target_id / selected_id / inventory / recommendations / selected_evaluation / remaining_budget / history / last_result / model_config / usage / last_agent`。遗器和候选中的 `set_match` 为 `recommended / not_recommended / unknown`；前端只展示该结构化结果。`model_config` 不含 Key；`usage` 来自服务端 ledger。分值、排序、限制和决策由 Rust 提供；前端只做字段格式化、ID 联结和交互。
 
 Agent 当前有 `set_target_character`、`get_current_state`、`get_relic_candidates`、`get_next_relic_recommendation`、`get_upgrade_history` 五个 Tool。详细协议见 [Runtime 文档](../hsr-agent-runtime/README.md)。
 
@@ -125,6 +126,6 @@ Web 测试覆盖三种判断、同件状态与历史更新、Hold 恢复、Stop 
 
 测试覆盖 core 状态 JSON 往返、多轮上下文、统一事件回调、可保存的取消任务、模型 HTTP 等待取消、Session JSON 账号状态恢复和密钥排除。显式 Agent 端到端测试还验证脚本模型 → Tools → 真实 Fribbels → 保存/加载 Trace、usage 和预算阻断。
 
-Demo 简化：每次固定加载当前 fixture、8 步强化预算；没有账号上传或数据库。会话首先保留在服务内存，浏览器 sessionStorage 保存会话令牌，刷新可继续；重启前需要手动保存 JSON，重启后再加载。最多 64 个内存会话，新建时清理闲置超过两小时的会话。没有登录、多设备同步、数据库自动持久化或生产级 SSE 断线补发；断线后仍可通过任务历史读取已经保存的完整 Trace。
+Demo 简化：每次固定加载当前 fixture、8 步强化预算；没有真实账号上传或会话数据库。静态推荐数据只是只读知识表。会话首先保留在服务内存，浏览器 sessionStorage 保存会话令牌，刷新可继续；重启前需要手动保存 JSON，重启后再加载。最多 64 个内存会话，新建时清理闲置超过两小时的会话。没有登录、多设备同步、数据库自动持久化或生产级 SSE 断线补发；断线后仍可通过任务历史读取已经保存的完整 Trace。
 
 评价边界保持 v0.2：真实评分、平均满级潜力和参考 Build 面板；旧版 Blade / Seele 的简化普攻不是完整技能输出或 DPS。缺失四个部位按库存补齐只是参考假设；升级成本、阈值仍为 Demo 启发式。

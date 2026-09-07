@@ -5,6 +5,7 @@ import { build } from '../upstream/hsr-optimizer/node_modules/vite/dist/node/ind
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const upstream = resolve(root, 'upstream/hsr-optimizer')
+execFileSync(process.execPath, [resolve(root, 'adapters/recommendations/prepare.mjs')], { stdio: 'inherit' })
 // Reuse the existing pinned-version check and evaluator build.
 execFileSync(process.execPath, [resolve(root, 'adapters/fribbels/build.mjs')], { stdio: 'inherit' })
 await build({

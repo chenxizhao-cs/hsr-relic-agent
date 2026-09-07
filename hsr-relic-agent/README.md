@@ -7,6 +7,7 @@
 从 workspace 根目录进入：
 
 ```bash
+node adapters/recommendations/prepare.mjs
 node adapters/fribbels/build.mjs
 cd hsr-relic-agent
 cargo test
@@ -16,7 +17,7 @@ cargo run -- --interactive
 cargo run -- --mock
 ```
 
-首次缺少上游依赖时，先在 workspace 根目录执行 `npm ci --prefix upstream/hsr-optimizer`。默认测试不要求 Node；开启 `fribbels-integration` 后额外验证真实工具与故障注入，必须先构建 Adapter。默认运行失败不会隐式退回 Mock。
+首次缺少上游依赖时，先在 workspace 根目录执行 `npm ci --prefix upstream/hsr-optimizer`。静态推荐准备脚本从固定 commit 下载游戏配置、校验 SHA-256，并生成不提交到 Git 的自有 JSON。默认测试不要求 Node；开启 `fribbels-integration` 后额外验证真实工具与故障注入，必须先构建 Adapter。默认运行失败不会隐式退回 Mock。
 
 `cargo run` 自动走完固定演示并退出：比较 Seele / Blade 排序 → 手动选择 `9100002` 强化得到 Continue → 选择 `9100001`，两次真实更新得到 Hold / Stop → 重新推荐其他遗器 → 用户切换 Seele 并观察 `9200002`。这些手动选择用于演示分支，不伪称它们是当时排名第一的候选。
 
@@ -61,6 +62,7 @@ src/
 ├── lib.rs        公共 API、错误类型、fixture 入口
 ├── model.rs      内部账号、角色、遗器、培养目标、结果、决策与历史
 ├── import.rs     私有 scanner v4 DTO → AccountState
+├── recommendations.rs 自有静态推荐 schema、校验与角色套装匹配
 ├── evaluator.rs  Evaluator 抽象与 MockEvaluator
 ├── fribbels.rs   自有 JSON DTO、真实数值、参考 Build、子进程/缓存/超时/取消
 ├── decision.rs   候选排序、选中、强化状态更新与 Continue/Hold/Stop
@@ -72,7 +74,7 @@ tests/evaluator_boundary.rs  无 Node 的边界测试
 tests/fribbels.rs  显式 feature 开启的真实工具与故障测试
 ```
 
-Node Adapter 源码位于 workspace 的 `adapters/fribbels/`，不在第三方仓库内部。
+Node Adapter 源码位于 workspace 的 `adapters/fribbels/` 与 `adapters/recommendations/`，不在第三方仓库内部。
 
 业务 API：`load_scanner_v4(json, steps)` → `DecisionEngine::new(account, evaluator)` → `set_goal(id)` → `recommend_next()` → `apply_upgrade(UpgradeResult)`。调用者可以直接构造内部模型或实现 `Evaluator`，无需启动 CLI。`UpgradeResult.expected_level` 用于拒绝过期/重复结果；CLI 根据当前选中遗器填入。
 
@@ -86,13 +88,15 @@ Fribbels 提供：当前原始评分与评级、同口径 current / average / be
 
 `max(average - 参考同部位 current, 0) / 剩余步数 × 候选当前 Build 简化普攻伤害 / 参考当前 Build 简化普攻伤害`
 
+在进入上述排序前，若目标角色存在静态推荐记录，外圈和位面套装必须分别出现在该角色候选列表中。未覆盖角色返回 `Unknown` 并保留原候选，不把缺失知识当作“不适配”。主属性和副属性推荐已保存在数据库中，但当前不额外硬过滤，仍交给 Fribbels 评分，以避免重复计算或过早收紧规则。
+
 低潜力阈值改为 20（Mock 仍为 4）。下述判定顺序不变，评分增量换为 Fribbels potential 的 current 增量；Build 伤害比参与当前/替代候选的比较。阈值 20、连续两次无效、替代候选高 25% 仍是人工 Demo 策略，未经过最优性校准。平均潜力不是未来真实伤害，当前伤害比也不是完整收益预测。
 
 **伤害限制**：当前 fixture 的未强化版 Blade / Seele 在固定上游仅实现 100% ATK 普通攻击和击破。此处展示/比较 `actionDamage.BASIC` 的暴击期望，尤其不代表 Blade 的生命缩放强化普攻；不是完整角色输出、DPS 或队伍总伤害。默认无队友、95 级单体、有属性弱点且未击破；角色/光锥 80 级、完整行迹和固定上游开关。协议以 `legacy_atk_basic_v1` 标明这个限制，未擅自改用 buffed 版本。
 
 Rust API 使用 `DecisionEngine::new(account, FribbelsEvaluator::new(FribbelsConfig::default()))` 即可，无需 CLI。配置提供敌人条件、Node/bundle 路径、20 秒默认超时、进度回调和取消标记；等待时每秒通知，CLI 可 Ctrl+C。每次批量计算，缓存按完整输入区分，升级后的同 ID 必须重新计算；失败不提交状态。
 
-协议、完整口径与来源见 [Adapter 文档](../adapters/fribbels/README.md)。
+协议、完整口径与来源见 [Fribbels Adapter 文档](../adapters/fribbels/README.md) 和 [静态推荐 Adapter 文档](../adapters/recommendations/README.md)。
 
 ## 保留的 v0.1 Mock 对照规则
 

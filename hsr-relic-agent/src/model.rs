@@ -184,6 +184,7 @@ mod decision_map {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpgradeRecommendation {
     pub relic_id: String,
+    pub set_match: crate::RecommendationMatch,
     pub current_score: f64,
     pub projected_score: f64,
     pub baseline_score: f64,

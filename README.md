@@ -39,7 +39,7 @@ Adapter 会检查上游 commit 和工作区是否干净，不会修改 Fribbels 
 node web/prepare.mjs
 ```
 
-这一步会构建薄 Fribbels Adapter，并从上游 Assets 层生成当前 Demo 使用的角色、遗器和属性图片映射。
+这一步会生成固定版本的游戏静态推荐数据库、构建薄 Fribbels Adapter，并从上游 Assets 层生成当前 Demo 使用的角色、遗器和属性图片映射。
 
 ### 3. 启动
 
@@ -56,7 +56,7 @@ cargo run --manifest-path hsr-relic-web/Cargo.toml
 ### 方式一：直接操作强化工作台
 
 1. 在左侧选择刃或希儿；
-2. 中间会显示 Rust Decision Engine 排序后的遗器候选；
+2. 中间会先按目标角色的游戏静态套装推荐筛选，再显示 Rust Decision Engine 排序后的遗器候选；
 3. 点击一件遗器，查看当前评分、副属性和平均满级潜力；
 4. 选择本次变化的副属性并填写增量；
 5. 点击“记录强化结果”，查看 Continue / Hold / Stop、原因和新的推荐；
@@ -145,6 +145,7 @@ export HSR_LLM_TOKEN_BUDGET="20000"
 如果只想查看确定性强化闭环：
 
 ```bash
+node adapters/recommendations/prepare.mjs
 node adapters/fribbels/build.mjs
 cargo run --manifest-path hsr-relic-agent/Cargo.toml
 ```
@@ -179,6 +180,7 @@ cargo test --manifest-path hsr-relic-web/Cargo.toml --test agent_e2e -- --ignore
 当前 Demo 已实现：
 
 - 自有 Rust `AccountState` 和强化状态更新；
+- 固定版本的游戏静态角色—套装/位面/主副属性推荐数据，经自有 JSON 边界加载；
 - Fribbels 遗器当前评分、平均满级潜力及参考 Build 数值；
 - Rust 候选排序和 Continue / Hold / Stop；
 - Web 与 CLI 共用同一个 core；
@@ -202,6 +204,8 @@ hsr-agent-runtime/     ModelConfig、Provider、Agent Tools、usage/budget
 hsr-relic-web/         薄 Rust Web/API 与内存会话
 web/                   独立前端与 AssetProvider
 adapters/fribbels/     自有 JSON ↔ Fribbels 薄 Adapter
+adapters/recommendations/ 固定游戏配置 → 自有静态推荐 JSON
+data/.generated/       本地生成且不提交的静态推荐数据库
 fixtures/              HSR-Scanner v4 模拟账号
 research/              上游源码与接口索引、集成实验记录
 upstream/              本地第三方 checkout，不提交到本仓库
@@ -220,6 +224,7 @@ upstream/              本地第三方 checkout，不提交到本仓库
 ## 第三方项目与致谢
 
 - [Fribbels HSR Optimizer](https://github.com/fribbels/hsr-optimizer)：遗器评分、Build 计算和视觉资源映射；代码采用 MIT License。
+- [DimbreathBot/TurnBasedGameData](https://github.com/DimbreathBot/TurnBasedGameData)：游戏静态 `AvatarRelicRecommend.json` 来源；本项目固定 commit 后在本地转换，不重新发布完整上游文件。来源仓库未声明许可证。
 - [HSR-Scanner](https://github.com/kel-z/HSR-Scanner)：v4 模拟数据格式参考。
 - [Reliquary Archiver](https://github.com/IceDynamix/reliquary-archiver)：未来真实账号导入候选，本版本未集成。
 - [HSR_Nous](https://github.com/pzc2004/HSR_Nous)：仅保留调研参考，本版本未集成。
