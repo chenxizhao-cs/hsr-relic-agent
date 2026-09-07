@@ -47,7 +47,7 @@ impl Stat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Slot {
     Head,
@@ -63,6 +63,16 @@ pub struct LightCone {
     pub id: String,
     pub level: u8,
     pub superimposition: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InventoryLightCone {
+    pub uid: String,
+    pub id: String,
+    pub level: u8,
+    pub superimposition: u8,
+    pub equipped_by: Option<String>,
+    pub locked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -125,6 +135,8 @@ pub struct UpgradeRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountState {
     pub characters: BTreeMap<String, Character>,
+    #[serde(default)]
+    pub light_cones: BTreeMap<String, InventoryLightCone>,
     pub relics: BTreeMap<String, Relic>,
     /// Demo budget only: each accepted +3 event consumes one step, not real materials.
     pub upgrade_steps: u32,

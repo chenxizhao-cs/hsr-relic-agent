@@ -91,6 +91,8 @@ impl<'a, E: Evaluator> CoreTools<'a, E> {
             })
             .collect();
         json!({"characters":characters,
+            "relic_count":account.relics.len(),
+            "light_cone_count":account.light_cones.len(),
             "target":self.engine.goal().and_then(|g| account.characters.get(&g.character_id)).map(|c| json!({"id":c.id,"name":c.name})),
             "selected_relic_id":self.engine.selected().map(|r| &r.id),
             "remaining_upgrade_steps":account.upgrade_steps,

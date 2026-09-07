@@ -281,6 +281,8 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-height: 390px;
+  overflow-y: auto;
   z-index: 2;
 }
 .character-choice {
@@ -1383,6 +1385,43 @@ footer a {
   margin-left: auto;
   color: var(--gold);
 }
+.account-loader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 22px;
+  margin-bottom: 18px;
+}
+.account-loader>div:first-child {
+  min-width: 0;
+  flex: 1;
+}
+.account-loader .panel-label {
+  margin-bottom: 7px;
+}
+.account-loader p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.account-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.character-choice.unavailable {
+  opacity: .48;
+  filter: grayscale(.35);
+}
+.list-limit {
+  padding: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
 .spinner {
   width: 14px;
   height: 14px;
@@ -1528,6 +1567,9 @@ dialog p,dialog li {
     flex-direction: row;
     padding: 10px 10px 15px 15px;
     width: 350px;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
   .character-choice {
     min-width: 150px;
@@ -1576,6 +1618,16 @@ dialog p,dialog li {
   }
 }
 @media(max-width:650px) {
+  .account-loader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .account-actions {
+    justify-content: stretch;
+  }
+  .account-actions button {
+    flex: 1;
+  }
   .topbar {
     height: 74px;
     padding: 0 16px;
@@ -1686,6 +1738,9 @@ dialog p,dialog li {
     flex-direction: column;
     padding: 5px 12px 12px;
     gap: 5px;
+    max-height: 280px;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
   .character-choice {
     padding: 3px 8px;

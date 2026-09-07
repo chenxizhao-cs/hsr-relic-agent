@@ -12,7 +12,10 @@ pub use fribbels::{
     BuildMetrics, BuildPanel, CombatConditions, DamageModel, EvaluationDetails, EvaluationProgress,
     FRIBBELS_COMMIT, FribbelsConfig, FribbelsEvaluator, ReferenceBuild, RelicMetrics,
 };
-pub use import::load_scanner_v4;
+pub use import::{
+    AccountImportError, AccountImportErrorCode, AccountImportSummary, ImportedAccount,
+    load_reliquary_v4, load_scanner_v4,
+};
 pub use model::*;
 pub use recommendations::{
     CharacterRelicDatabase, CharacterRelicProfile, RecommendationMatch, RecommendationSource,
@@ -20,6 +23,7 @@ pub use recommendations::{
 };
 
 pub const DEMO_ACCOUNT: &str = include_str!("../../fixtures/scanner-v4-demo.json");
+pub const RELIQUARY_DEMO_ACCOUNT: &str = include_str!("../../fixtures/reliquary-v4-demo.json");
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error(pub String);

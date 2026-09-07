@@ -14,6 +14,9 @@ export class AssetProvider {
   relic(relic) {
     return this.manifest.relics[relic.set_id]?.[relic.slot] ?? this.manifest.fallback
   }
+  setName(id) {
+    return this.manifest.relic_set_names?.[id] ?? id
+  }
   stat(stat) {
     return this.manifest.stats[stat] ?? this.manifest.fallback
   }

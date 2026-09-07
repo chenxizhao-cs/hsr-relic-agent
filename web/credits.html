@@ -11,5 +11,8 @@
 <h2>游戏静态推荐数据</h2>
 <p>角色的套装、位面、主属性和副属性候选来自 <a href="https://github.com/DimbreathBot/TurnBasedGameData">DimbreathBot/TurnBasedGameData</a> 中的 <code>AvatarRelicRecommend.json</code>，固定 commit <code>8cdb905dc2f8e6fffa9be4eb07af3e34435d6091</code>。准备脚本会校验 SHA-256，再转换为本项目自己的 JSON；完整上游文件和生成数据库均不提交。</p>
 <p>该仓库是社区提取的游戏客户端配置，不是米哈游公开 API，且没有声明许可证。本项目记录来源并仅在用户本地生成；游戏数据权利归原权利人所有。静态推荐表示游戏配置中的候选，不等于玩家使用率或数学最优结论。</p>
-<h2>我们自己的边界</h2><p>页面只显示 Rust API 返回的结果。评分来自 Evaluator，排序与强化决策由 Rust core 完成。原生 HTML/CSS/JavaScript、Rust Web/API 层及 AssetProvider 均在本项目独立实现。模拟账号不关联任何真实玩家。</p>
+<h2>Reliquary Archiver</h2>
+<p>真实账号文件格式来自 <a href="https://github.com/IceDynamix/reliquary-archiver">Reliquary Archiver</a> 的 v4 JSON，当前参考 commit <code>cb109f17a4a15b7604cfe9d078a8735e7735cd25</code>，项目采用 MIT License。本项目只兼容其公开输出格式，不复制网络抓取实现。</p>
+<p>内置 Demo 由用户授权提供的真实导出清洗得到：玩家 UID 已删除、抽卡资源归零、材料移除，遗器和光锥内部 UID 全部替换；保留角色、装备、等级、词条和锁定状态用于课程演示。未经清洗的原始文件不进入 Git。</p>
+<h2>我们自己的边界</h2><p>页面只显示 Rust API 返回的结果。评分来自 Evaluator，排序与强化决策由 Rust core 完成。原生 HTML/CSS/JavaScript、Rust Web/API 层及 AssetProvider 均在本项目独立实现。</p>
 </main></body></html>

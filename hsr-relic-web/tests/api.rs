@@ -3,6 +3,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use hsr_relic_agent::{RELIQUARY_DEMO_ACCOUNT, load_reliquary_v4};
 use hsr_relic_web::{App, router};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
@@ -12,6 +13,12 @@ use tower::ServiceExt;
 fn app() -> Router {
     router(
         App::new(true),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."),
+    )
+}
+fn reliquary_app() -> Router {
+    router(
+        App::new(true).with_demo_account(load_reliquary_v4(RELIQUARY_DEMO_ACCOUNT, 8).unwrap()),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."),
     )
 }
@@ -110,6 +117,82 @@ async fn core_loop_updates_same_relic_and_resumes_hold_explicitly() {
     assert_ne!(state["selected_id"], "9100001");
     assert_eq!(state["history"].as_array().unwrap().len(), 3);
     assert_eq!(state["remaining_budget"], 5);
+}
+
+#[tokio::test]
+async fn demo_and_uploaded_reliquary_accounts_share_imported_shape_and_fail_transactionally() {
+    let demo_app = reliquary_app();
+    let (demo_token, demo_state) = session(&demo_app).await;
+    assert_eq!(demo_state["account_summary"]["characters"], 64);
+    assert_eq!(demo_state["account_summary"]["relics_in_file"], 3001);
+    assert_eq!(demo_state["account_summary"]["relics_imported"], 2971);
+    assert_eq!(demo_state["account_summary"]["relics_skipped"], 30);
+    assert_eq!(demo_state["account_summary"]["light_cones"], 391);
+    assert_eq!(demo_state["inventory"].as_array().unwrap().len(), 2971);
+
+    let legacy_app = app();
+    let (token, before) = session(&legacy_app).await;
+    let account: Value = serde_json::from_str(RELIQUARY_DEMO_ACCOUNT).unwrap();
+    let (status, uploaded) = request(
+        &legacy_app,
+        "POST",
+        "/api/account/import",
+        &token,
+        json!({"expected_revision":before["revision"],"account":account}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{uploaded}");
+    assert_eq!(uploaded["account_summary"], demo_state["account_summary"]);
+    assert_eq!(uploaded["inventory"].as_array().unwrap().len(), 2971);
+
+    let mut invalid: Value = serde_json::from_str(RELIQUARY_DEMO_ACCOUNT).unwrap();
+    invalid["source"] = json!("not_reliquary");
+    let (status, error) = request(
+        &legacy_app,
+        "POST",
+        "/api/account/import",
+        &token,
+        json!({"expected_revision":uploaded["revision"],"account":invalid}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error["error"]["code"], "unsupported_source");
+    assert_eq!(error["error"]["path"], "source");
+    let (_, unchanged) = request(&legacy_app, "GET", "/api/state", &token, Value::Null).await;
+    assert_eq!(unchanged, uploaded);
+
+    let (status, reloaded) = request(
+        &demo_app,
+        "POST",
+        "/api/account/demo",
+        &demo_token,
+        json!({"expected_revision":demo_state["revision"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reloaded["account_summary"], demo_state["account_summary"]);
+
+    let (status, saved) = request(
+        &demo_app,
+        "GET",
+        "/api/session/export",
+        &demo_token,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(serde_json::to_vec(&saved).unwrap().len() < 7 * 1024 * 1024);
+    let (status, restored) = request(
+        &demo_app,
+        "POST",
+        "/api/session/import",
+        &demo_token,
+        json!({"expected_revision":reloaded["revision"],"session":saved}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(restored["account_summary"], demo_state["account_summary"]);
+    assert_eq!(restored["inventory"].as_array().unwrap().len(), 2971);
 }
 
 #[tokio::test]

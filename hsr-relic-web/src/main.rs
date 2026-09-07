@@ -1,5 +1,5 @@
 use hsr_agent_runtime::ModelConfig;
-use hsr_relic_agent::load_character_relic_database;
+use hsr_relic_agent::{RELIQUARY_DEMO_ACCOUNT, load_character_relic_database, load_reliquary_v4};
 use hsr_relic_web::{App, router};
 use std::{path::PathBuf, sync::Arc};
 
@@ -20,6 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let recommendation_json = std::fs::read_to_string(&recommendation_path)
         .map_err(|_| "缺少静态推荐数据库；请执行 node web/prepare.mjs")?;
     let recommendation_database = Arc::new(load_character_relic_database(&recommendation_json)?);
+    let demo_account = load_reliquary_v4(RELIQUARY_DEMO_ACCOUNT, 8)?;
     let mock = args.iter().any(|a| a == "--mock");
     if !mock && !root.join("adapters/fribbels/dist/adapter.mjs").is_file() {
         return Err("缺少 Fribbels Adapter；请执行 node web/prepare.mjs".into());
@@ -46,7 +47,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         listener,
         router(
             App::with_model_config(mock, model_config)
-                .with_recommendation_database(recommendation_database),
+                .with_recommendation_database(recommendation_database)
+                .with_demo_account(demo_account),
             root,
         ),
     )

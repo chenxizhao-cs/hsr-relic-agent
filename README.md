@@ -2,13 +2,13 @@
 
 一个面向《崩坏：星穹铁道》的遗器强化决策 Agent，也是清华大学 Rust 课程项目。
 
-你先告诉系统准备培养哪位角色；系统会从模拟账号的遗器库存中推荐下一件值得强化的遗器。每次录入强化结果后，它会更新同一件遗器并重新判断：
+你先告诉系统准备培养哪位角色；系统会从 Reliquary 账号或内置脱敏 Demo 的遗器库存中推荐下一件值得强化的遗器。每次录入强化结果后，它会更新同一件遗器并重新判断：
 
 - **Continue**：继续强化当前遗器；
 - **Hold**：暂时保留，先观察其他候选；
 - **Stop**：对当前角色停止投入，切换到其他遗器。
 
-当前 Demo 支持 Blade（刃）和 Seele（希儿），既可以直接操作 Web 工作台，也可以让 LLM 通过 Agent Tools 设置目标并查询推荐。
+内置 Demo 来自真实 Reliquary v4 账号的脱敏副本，包含 64 个角色、3001 件源遗器和 391 个光锥。当前强化模型实际接收其中 2971 件五星、+3 检查点遗器；页面会明确显示其余 30 件被跳过。真实 Fribbels 闭环已用 Blade（刃）验证，其他角色需要角色和已装备光锥均达到 80 级才会在页面中开放选择。
 
 ## 几分钟启动 Web Demo
 
@@ -51,25 +51,33 @@ cargo run --manifest-path hsr-relic-web/Cargo.toml
 
 停止服务时按 `Ctrl+C`。如果 3000 端口被占用，可以先设置 `HSR_WEB_PORT=3001`。
 
+## Windows 获取真实账号 JSON
+
+1. 从 [Npcap 官网](https://npcap.com/)安装 Npcap。安装时勾选 `Install Npcap in WinPcap API-compatible Mode`；使用 Wi-Fi 时再勾选 `Support raw 802.11 traffic (and monitor mode) for wireless adapters`。
+2. 从 [Reliquary Archiver Releases](https://github.com/IceDynamix/reliquary-archiver/releases/)下载最新版 `reliquary-archiver-pcap-x64.exe`。
+3. 启动游戏并停在列车登录画面的 `Click to Start`，先不要进入游戏。
+4. 运行 Reliquary，等待它显示 `Waiting for login...`。此时 `Export not ready` 是正常状态。
+5. 回到游戏点击 `Click to Start` 并完整进入账号。成功后 Reliquary 会显示 `Connected!`，角色、遗器和光锥数量应不再为 0。
+6. 点击 Reliquary 的 Export / Download，保存得到的 `archive_output-日期时间.json`，然后在本项目页面点击“导入 Reliquary JSON”。
+
+若启动 Reliquary 前已经进入游戏，请退出登录后重试。原始 JSON 含账号 UID、资源数量和物品内部 ID，不要提交到 GitHub 或公开分享。更多排查和隐私说明见 [完整 Windows 教程](docs/reliquary-import-windows.md)。
+
 ## 怎么试玩
 
 ### 方式一：直接操作强化工作台
 
-1. 在左侧选择刃或希儿；
-2. 中间会先按目标角色的游戏静态套装推荐筛选，再显示 Rust Decision Engine 排序后的遗器候选；
-3. 点击一件遗器，查看当前评分、副属性和平均满级潜力；
-4. 选择本次变化的副属性并填写增量；
-5. 点击“记录强化结果”，查看 Continue / Hold / Stop、原因和新的推荐；
-6. 需要重新开始时，点击右上角“重置试用”。
+1. 点击“加载示例账号”，或选择“导入 Reliquary JSON”上传自己的 `archive_output-*.json`；
+2. 查看角色、遗器、光锥和装备关系导入摘要；
+3. 在左侧选择一个当前评价器可用的目标角色；
+4. 中间会先按目标角色的游戏静态套装推荐筛选，再显示 Rust Decision Engine 排序后的遗器候选；
+5. 点击一件遗器，查看当前评分、副属性和平均满级潜力；
+6. 选择本次变化的副属性并填写增量；
+7. 点击“记录强化结果”，查看 Continue / Hold / Stop、原因和新的推荐；
+8. 需要重新开始时，点击右上角“重置试用”。
 
 输入的是**本次增加量**，不是强化后的总值。百分比属性填写百分点，例如暴击率增加 `3.24`。
 
-可以用下面这组操作快速观察三种判断：
-
-1. 选择刃；
-2. 选择手部 `#9100002`，录入暴击率 `+3.24`，观察 Continue；
-3. 在“全部库存”选择头部 `#9100001`，录入防御力% `+5.4`，观察 Hold；
-4. 再次选择同一件遗器以恢复观察，再录入防御力% `+5.4`，观察 Stop 和改推另一件遗器。
+内置真实规模 Demo 的推荐和判断取决于所选角色、遗器当前状态与录入的强化结果，不预设必然得到某一种判断。若要快速、可重复地观察 Continue / Hold / Stop 三条分支，可运行后文的 CLI Mock 对照模式；它继续使用小型教学 fixture。
 
 ### 方式二：使用自然语言 Agent
 
@@ -187,14 +195,15 @@ cargo test --manifest-path hsr-relic-web/Cargo.toml --test agent_e2e -- --ignore
 - LLM Tool 调用、模型配置、真实 Token usage、费用和 Token Budget；
 - SSE 实时 Agent Trace，以及可向模型请求和 Fribbels 子进程传播的取消；
 - 多轮模型上下文、历史任务浏览和版本化 Session JSON 保存/加载。
+- Reliquary Archiver v4 原始 JSON 上传、结构化校验、装备关系转换和事务式会话替换；
+- 由真实账号生成的可重复脱敏 Demo，且与用户上传共用同一个 Rust importer。
 
 仍未实现：
 
-- 真实游戏账号导入；
 - 完整角色技能、完整队伍 DPS 或最终概率模型；
 - 公网部署所需的认证、TLS 和密钥管理。
 
-旧版 Blade / Seele 的当前伤害指标只是 Fribbels 中的简化普通攻击参考，不能视为完整实战收益。当前强化步数、阈值和 fixture 都是课堂 Demo 假设。
+旧版 Blade / Seele 的当前伤害指标只是 Fribbels 中的简化普通攻击参考，不能视为完整实战收益。当前强化步数和阈值仍是课堂 Demo 假设。
 
 ## 项目结构
 
@@ -205,8 +214,11 @@ hsr-relic-web/         薄 Rust Web/API 与内存会话
 web/                   独立前端与 AssetProvider
 adapters/fribbels/     自有 JSON ↔ Fribbels 薄 Adapter
 adapters/recommendations/ 固定游戏配置 → 自有静态推荐 JSON
+adapters/reliquary/    私有 Reliquary JSON → 可公开脱敏 Demo
 data/.generated/       本地生成且不提交的静态推荐数据库
-fixtures/              HSR-Scanner v4 模拟账号
+data/private/          本机私有原始账号，Git 永久忽略
+fixtures/              小型 Scanner fixture 与脱敏 Reliquary Demo
+docs/                  用户导入教程
 research/              上游源码与接口索引、集成实验记录
 upstream/              本地第三方 checkout，不提交到本仓库
 ```
@@ -219,6 +231,7 @@ upstream/              本地第三方 checkout，不提交到本仓库
 - [Rust core 与 CLI](hsr-relic-agent/README.md)
 - [Fribbels Adapter](adapters/fribbels/README.md)
 - [模拟数据](fixtures/README.md)
+- [Windows 导出与导入 Reliquary 教程](docs/reliquary-import-windows.md)
 - [上游源码索引](research/upstream-index.md)
 
 ## 第三方项目与致谢
@@ -226,7 +239,7 @@ upstream/              本地第三方 checkout，不提交到本仓库
 - [Fribbels HSR Optimizer](https://github.com/fribbels/hsr-optimizer)：遗器评分、Build 计算和视觉资源映射；代码采用 MIT License。
 - [DimbreathBot/TurnBasedGameData](https://github.com/DimbreathBot/TurnBasedGameData)：游戏静态 `AvatarRelicRecommend.json` 来源；本项目固定 commit 后在本地转换，不重新发布完整上游文件。来源仓库未声明许可证。
 - [HSR-Scanner](https://github.com/kel-z/HSR-Scanner)：v4 模拟数据格式参考。
-- [Reliquary Archiver](https://github.com/IceDynamix/reliquary-archiver)：未来真实账号导入候选，本版本未集成。
+- [Reliquary Archiver](https://github.com/IceDynamix/reliquary-archiver)：真实账号 v4 JSON 来源；本项目读取其公开格式，不复制其抓包实现。项目采用 MIT License。
 - [HSR_Nous](https://github.com/pzc2004/HSR_Nous)：仅保留调研参考，本版本未集成。
 
 本仓库不提交第三方源码或生成出的游戏图片资源，也没有修改 `upstream/` 中的第三方业务源码。游戏名称、角色和美术资源权利归原权利人所有；本项目为非官方课堂 Demo。

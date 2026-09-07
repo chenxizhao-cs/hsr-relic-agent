@@ -73,11 +73,27 @@ impl Evaluator for WebEvaluator {
         }
     }
 }
+impl WebEvaluator {
+    fn supports_character(&self, character: &Character) -> bool {
+        let has_levelled_cone = character
+            .light_cone
+            .as_ref()
+            .is_some_and(|light_cone| light_cone.level == 80);
+        character.level == 80
+            && has_levelled_cone
+            && match self {
+                Self::Mock => matches!(character.id.as_str(), "1205" | "1102"),
+                Self::Fribbels(_) => true,
+            }
+    }
+}
 
 type Engine = DecisionEngine<WebEvaluator>;
 #[derive(Clone)]
 struct SessionData {
     engine: Engine,
+    initial_account: AccountState,
+    import_summary: AccountImportSummary,
     evaluator: WebEvaluator,
     revision: u64,
     last_result: Option<Value>,
@@ -103,21 +119,32 @@ pub struct App {
     mock: bool,
     default_model_config: ModelConfig,
     recommendation_database: Option<Arc<CharacterRelicDatabase>>,
+    demo_account: AccountState,
+    demo_summary: AccountImportSummary,
 }
 impl App {
     pub fn new(mock: bool) -> Self {
         Self::with_model_config(mock, ModelConfig::default())
     }
     pub fn with_model_config(mock: bool, default_model_config: ModelConfig) -> Self {
+        let demo_account = load_scanner_v4(DEMO_ACCOUNT, 8).expect("bundled scanner demo is valid");
+        let demo_summary = summary_from_account(&demo_account, "HSR-Scanner", 4, "v1.2.0");
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             mock,
             default_model_config,
             recommendation_database: None,
+            demo_account,
+            demo_summary,
         }
     }
     pub fn with_recommendation_database(mut self, database: Arc<CharacterRelicDatabase>) -> Self {
         self.recommendation_database = Some(database);
+        self
+    }
+    pub fn with_demo_account(mut self, imported: ImportedAccount) -> Self {
+        self.demo_account = imported.account;
+        self.demo_summary = imported.summary;
         self
     }
     fn session(&self, headers: &HeaderMap) -> ApiResult<Arc<Session>> {
@@ -157,6 +184,8 @@ pub fn router(app: App, root: PathBuf) -> Router {
         .route("/api/tasks", get(tasks))
         .route("/api/session/export", get(export_session))
         .route("/api/session/import", post(import_session))
+        .route("/api/account/demo", post(load_demo_account))
+        .route("/api/account/import", post(import_account))
         .route("/api/progress", get(progress))
         .route("/api/cancel", post(cancel))
         .route("/api/health", get(|| async { Json(json!({"ok":true})) }))
@@ -165,7 +194,7 @@ pub fn router(app: App, root: PathBuf) -> Router {
             ServeDir::new(root.join("upstream/hsr-optimizer/public/assets")),
         )
         .fallback_service(ServeDir::new(root.join("web")))
-        .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
@@ -178,6 +207,7 @@ pub(crate) struct ApiError {
     status: StatusCode,
     code: &'static str,
     message: String,
+    path: Option<String>,
 }
 impl ApiError {
     fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
@@ -185,14 +215,55 @@ impl ApiError {
             status,
             code,
             message: message.into(),
+            path: None,
         }
+    }
+
+    fn from_import(error: AccountImportError) -> Self {
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: error.code.as_str(),
+            message: error.message,
+            path: error.path,
+        }
+    }
+}
+
+fn summary_from_account(
+    account: &AccountState,
+    source: &str,
+    version: u32,
+    build: &str,
+) -> AccountImportSummary {
+    let equipped_relics = account
+        .relics
+        .values()
+        .filter(|relic| relic.equipped_by.is_some())
+        .count();
+    AccountImportSummary {
+        source: source.into(),
+        version,
+        build: build.into(),
+        characters: account.characters.len(),
+        relics_in_file: account.relics.len(),
+        relics_imported: account.relics.len(),
+        relics_skipped: 0,
+        light_cones: account.light_cones.len(),
+        equipped_relics,
+        imported_equipped_relics: equipped_relics,
+        equipped_light_cones: account
+            .light_cones
+            .values()
+            .filter(|light_cone| light_cone.equipped_by.is_some())
+            .count(),
+        equipment_relations_recognized: true,
     }
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (
             self.status,
-            Json(json!({"error":{"code":self.code,"message":self.message}})),
+            Json(json!({"error":{"code":self.code,"message":self.message,"path":self.path}})),
         )
             .into_response()
     }
@@ -234,12 +305,15 @@ async fn create_session(State(app): State<App>) -> ApiResult<Json<Value>> {
             },
         ))))
     };
-    let mut engine = Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, evaluator.clone());
+    let initial_account = app.demo_account.clone();
+    let mut engine = Engine::new(initial_account.clone(), evaluator.clone());
     if let Some(database) = &app.recommendation_database {
         engine = engine.with_recommendation_database(database.clone());
     }
     let data = SessionData {
         engine,
+        initial_account,
+        import_summary: app.demo_summary.clone(),
         evaluator,
         revision: 0,
         last_result: None,
@@ -270,6 +344,112 @@ async fn state(State(app): State<App>, headers: HeaderMap) -> ApiResult<Json<Val
     let s = app.session(&headers)?;
     let snapshot = s.snapshot.lock().unwrap().clone();
     Ok(Json(snapshot))
+}
+
+#[derive(Deserialize)]
+struct RevisionCommand {
+    expected_revision: u64,
+}
+
+#[derive(Deserialize)]
+struct AccountImportCommand {
+    expected_revision: u64,
+    account: Value,
+}
+
+async fn load_demo_account(
+    State(app): State<App>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<RevisionCommand>, axum::extract::rejection::JsonRejection>,
+) -> ApiResult<Json<Value>> {
+    let command = payload
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "示例账号请求格式不正确。",
+            )
+        })?
+        .0;
+    let session = app.session(&headers)?;
+    replace_account(
+        &session,
+        command.expected_revision,
+        ImportedAccount {
+            account: app.demo_account.clone(),
+            summary: app.demo_summary.clone(),
+        },
+    )
+    .map(Json)
+}
+
+async fn import_account(
+    State(app): State<App>,
+    headers: HeaderMap,
+    payload: std::result::Result<
+        Json<AccountImportCommand>,
+        axum::extract::rejection::JsonRejection,
+    >,
+) -> ApiResult<Json<Value>> {
+    let session = app.session(&headers)?;
+    if session.running.load(Ordering::SeqCst) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "busy",
+            "任务运行中，请完成或取消后再导入账号。",
+        ));
+    }
+    let command = payload
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_account_file",
+                "账号 JSON 格式不正确或文件超过 8 MiB。",
+            )
+        })?
+        .0;
+    let json = serde_json::to_string(&command.account).map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_account_file",
+            "账号 JSON 无法读取。",
+        )
+    })?;
+    let imported = load_reliquary_v4(&json, 8).map_err(ApiError::from_import)?;
+    replace_account(&session, command.expected_revision, imported).map(Json)
+}
+
+fn replace_account(
+    session: &Session,
+    expected_revision: u64,
+    imported: ImportedAccount,
+) -> ApiResult<Value> {
+    if session.running.load(Ordering::SeqCst) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "busy",
+            "任务运行中，请完成或取消后再切换账号。",
+        ));
+    }
+    let mut committed = session.data.lock().unwrap();
+    if committed.revision != expected_revision {
+        return Err(stale_revision());
+    }
+    let database = committed.engine.recommendation_database_handle();
+    let mut engine = Engine::new(imported.account.clone(), committed.evaluator.clone());
+    if let Some(database) = database {
+        engine = engine.with_recommendation_database(database);
+    }
+    let mut staged = committed.clone();
+    staged.engine = engine;
+    staged.initial_account = imported.account;
+    staged.import_summary = imported.summary;
+    staged.last_result = None;
+    staged.revision += 1;
+    let snapshot = dto::snapshot(&staged)?;
+    *committed = staged;
+    *session.snapshot.lock().unwrap() = snapshot.clone();
+    Ok(snapshot)
 }
 
 #[derive(Deserialize)]
@@ -383,8 +563,7 @@ fn execute(s: &Session, command: Command) -> ApiResult<Value> {
         }
         Action::Reset => {
             let database = staged.engine.recommendation_database_handle();
-            staged.engine =
-                Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, staged.evaluator.clone());
+            staged.engine = Engine::new(staged.initial_account.clone(), staged.evaluator.clone());
             if let Some(database) = database {
                 staged.engine = staged.engine.with_recommendation_database(database);
             }
@@ -626,6 +805,10 @@ struct SavedSession {
     evaluator: String,
     source_revision: u64,
     engine: SavedEngine,
+    #[serde(default)]
+    initial_account: Option<AccountState>,
+    #[serde(default)]
+    account_summary: Option<AccountImportSummary>,
     last_result: Option<Value>,
     model_config: ModelConfigView,
     usage: UsageLedger,
@@ -653,6 +836,8 @@ async fn export_session(State(app): State<App>, headers: HeaderMap) -> ApiResult
             goal: data.engine.goal().cloned(),
             selected_relic_id: data.engine.selected().map(|relic| relic.id.clone()),
         },
+        initial_account: Some(data.initial_account.clone()),
+        account_summary: Some(data.import_summary.clone()),
         last_result: data.last_result.clone(),
         model_config: data.model_config.view(),
         usage: data.usage.clone(),
@@ -748,8 +933,17 @@ async fn import_session(
             )
         })?;
     let saved_engine = command.session.engine;
+    let restored_account = saved_engine.account;
+    let initial_account = command
+        .session
+        .initial_account
+        .unwrap_or_else(|| restored_account.clone());
+    let import_summary = command
+        .session
+        .account_summary
+        .unwrap_or_else(|| summary_from_account(&restored_account, "session", 1, "legacy"));
     let mut engine = DecisionEngine::restore(
-        saved_engine.account,
+        restored_account,
         data.evaluator.clone(),
         saved_engine.goal,
         saved_engine.selected_relic_id,
@@ -760,6 +954,8 @@ async fn import_session(
     let runs = command.session.tasks;
     let mut staged = SessionData {
         engine,
+        initial_account,
+        import_summary,
         evaluator: data.evaluator.clone(),
         revision: data.revision + 1,
         last_result: command.session.last_result,

@@ -131,7 +131,7 @@ impl Default for FribbelsConfig {
             node: "node".into(),
             adapter: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../adapters/fribbels/dist/adapter.mjs"),
-            timeout: Duration::from_secs(20),
+            timeout: Duration::from_secs(120),
             conditions: CombatConditions::default(),
             cancelled: Arc::new(AtomicBool::new(false)),
             progress: None,
@@ -468,11 +468,11 @@ impl FribbelsEvaluator {
 fn read_limited(reader: impl Read) -> Result<Vec<u8>> {
     let mut bytes = vec![];
     reader
-        .take(4 * 1024 * 1024 + 1)
+        .take(8 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| Error(e.to_string()))?;
-    if bytes.len() > 4 * 1024 * 1024 {
-        return Err(Error("Adapter 输出超过 4 MiB".into()));
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err(Error("Adapter 输出超过 8 MiB".into()));
     }
     Ok(bytes)
 }
@@ -524,7 +524,9 @@ impl Evaluator for FribbelsEvaluator {
         let metrics = self.metrics(account, goal, relic)?;
         Ok(Evaluation {
             current_score: metrics.relic.current,
-            projected_score: metrics.relic.average,
+            // Upstream floating-point aggregation can place a full-level average a few
+            // ulps below current; preserve the evaluator contract without changing score units.
+            projected_score: metrics.relic.average.max(metrics.relic.current),
         })
     }
     fn details(

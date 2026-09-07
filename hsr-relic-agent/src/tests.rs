@@ -107,6 +107,70 @@ fn unknown_character_profiles_do_not_exclude_relics() {
     );
 }
 
+#[test]
+fn imports_full_reliquary_v4_demo_with_inventory_summary() {
+    let imported = load_reliquary_v4(RELIQUARY_DEMO_ACCOUNT, 8).unwrap();
+    assert_eq!(imported.summary.source, "reliquary_archiver");
+    assert_eq!(imported.summary.version, 4);
+    assert_eq!(imported.summary.characters, 64);
+    assert_eq!(imported.summary.relics_in_file, 3001);
+    assert_eq!(imported.summary.relics_imported, 2971);
+    assert_eq!(imported.summary.relics_skipped, 30);
+    assert_eq!(imported.summary.light_cones, 391);
+    assert_eq!(imported.summary.equipped_relics, 262);
+    assert_eq!(imported.summary.imported_equipped_relics, 261);
+    assert_eq!(imported.summary.equipped_light_cones, 43);
+    assert!(imported.summary.equipment_relations_recognized);
+    assert_eq!(imported.account.characters.len(), 64);
+    assert_eq!(imported.account.relics.len(), 2971);
+    assert_eq!(imported.account.light_cones.len(), 391);
+    assert!(
+        imported
+            .account
+            .characters
+            .get("1205")
+            .unwrap()
+            .light_cone
+            .is_some()
+    );
+}
+
+#[test]
+fn reliquary_import_errors_are_structured_and_do_not_expose_values() {
+    let invalid = r#"{"source":"wrong","build":"test","version":4,"characters":[],"light_cones":[],"relics":[]}"#;
+    let error = load_reliquary_v4(invalid, 8).unwrap_err();
+    assert_eq!(error.code, AccountImportErrorCode::UnsupportedSource);
+    assert_eq!(error.path.as_deref(), Some("source"));
+    assert!(!error.message.contains("wrong"));
+
+    let invalid = r#"{"source":"reliquary_archiver","build":"test","version":3,"characters":[],"light_cones":[],"relics":[]}"#;
+    let error = load_reliquary_v4(invalid, 8).unwrap_err();
+    assert_eq!(error.code, AccountImportErrorCode::UnsupportedVersion);
+    assert_eq!(error.path.as_deref(), Some("version"));
+}
+
+#[test]
+fn reliquary_import_preserves_locks_discards_and_equipment_relations() {
+    let json = r#"{
+        "source":"reliquary_archiver","build":"test","version":4,
+        "characters":[{"id":"character","name":"测试角色","level":80,"eidolon":0,"ability_version":0}],
+        "light_cones":[{"_uid":"cone-uid","id":"cone","level":80,"superimposition":2,"location":"character","lock":true}],
+        "relics":[{"_uid":"relic-uid","set_id":"set","slot":"Head","rarity":5,"level":0,"mainstat":"HP","substats":[{"key":"ATK","value":16.9},{"key":"DEF","value":16.9},{"key":"CRIT Rate_","value":2.5}],"location":"character","lock":true,"discard":true}]
+    }"#;
+    let imported = load_reliquary_v4(json, 8).unwrap();
+    let character = &imported.account.characters["character"];
+    assert_eq!(character.light_cone.as_ref().unwrap().id, "cone");
+    let light_cone = &imported.account.light_cones["cone-uid"];
+    assert!(light_cone.locked);
+    assert_eq!(light_cone.equipped_by.as_deref(), Some("character"));
+    let relic = &imported.account.relics["relic-uid"];
+    assert!(relic.locked);
+    assert!(relic.discarded);
+    assert_eq!(relic.equipped_by.as_deref(), Some("character"));
+    assert_eq!(imported.summary.equipped_relics, 1);
+    assert_eq!(imported.summary.equipped_light_cones, 1);
+}
+
 fn upgrade(id: &str, level: u8, stat: Stat, increase: f64) -> UpgradeResult {
     UpgradeResult {
         relic_id: id.into(),

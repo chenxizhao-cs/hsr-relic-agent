@@ -116,6 +116,29 @@ impl<E: Evaluator> DecisionEngine<E> {
                 return Err(Error("角色索引与角色 ID 不一致".into()));
             }
         }
+        for (uid, light_cone) in &account.light_cones {
+            if uid != &light_cone.uid
+                || light_cone.id.is_empty()
+                || !(1..=80).contains(&light_cone.level)
+                || !(1..=5).contains(&light_cone.superimposition)
+            {
+                return Err(Error(format!("光锥 {uid} 的字段无效")));
+            }
+            if let Some(character_id) = &light_cone.equipped_by {
+                let character = account
+                    .characters
+                    .get(character_id)
+                    .ok_or_else(|| Error(format!("光锥 {uid} 装备于不存在的角色")))?;
+                let equipped = LightCone {
+                    id: light_cone.id.clone(),
+                    level: light_cone.level,
+                    superimposition: light_cone.superimposition,
+                };
+                if character.light_cone.as_ref() != Some(&equipped) {
+                    return Err(Error(format!("光锥 {uid} 的角色装备关系不一致")));
+                }
+            }
+        }
         for (id, relic) in &account.relics {
             if id != &relic.id {
                 return Err(Error("遗器索引与遗器 ID 不一致".into()));
@@ -319,7 +342,10 @@ impl<E: Evaluator> DecisionEngine<E> {
             || evaluation.current_score < 0.0
             || evaluation.projected_score < evaluation.current_score
         {
-            return Err(Error("Evaluator 返回无效评分".into()));
+            return Err(Error(format!(
+                "Evaluator 返回无效评分：当前 {:.4}，预计 {:.4}",
+                evaluation.current_score, evaluation.projected_score
+            )));
         }
         Ok(evaluation)
     }
@@ -433,23 +459,34 @@ impl<E: Evaluator> DecisionEngine<E> {
     }
 
     /// Explicit selection resumes Hold; Stop is excluded for this target for this session.
-    pub fn select_relic(&mut self, relic_id: &str) -> RelicOperationResult<RelicSelection> {
-        let goal = self.operation_goal()?.clone();
+    pub fn check_relic_selectable(&self, relic_id: &str) -> RelicOperationResult<()> {
+        let goal = self.operation_goal()?;
         let relic = self.account.relics.get(relic_id).ok_or_else(|| {
             RelicOperationError::RelicNotFound {
                 relic_id: relic_id.into(),
             }
         })?;
-        let key = (goal.character_id.clone(), relic_id.into());
-        if self.account.decisions.get(&key) == Some(&UpgradeDecision::Stop) {
+        if self
+            .account
+            .decisions
+            .get(&(goal.character_id.clone(), relic_id.into()))
+            == Some(&UpgradeDecision::Stop)
+        {
             return Err(RelicOperationError::StoppedForTarget {
                 relic_id: relic_id.into(),
-                character_id: goal.character_id,
+                character_id: goal.character_id.clone(),
             });
         }
-        if let Some(reason) = self.operation_block(relic, &goal) {
+        if let Some(reason) = self.operation_block(relic, goal) {
             return Err(reason);
         }
+        Ok(())
+    }
+
+    pub fn select_relic(&mut self, relic_id: &str) -> RelicOperationResult<RelicSelection> {
+        self.check_relic_selectable(relic_id)?;
+        let goal = self.operation_goal()?.clone();
+        let key = (goal.character_id.clone(), relic_id.into());
         let resumed = self.account.decisions.remove(&key) == Some(UpgradeDecision::Hold);
         self.selected = Some(relic_id.into());
         if resumed {

@@ -28,6 +28,8 @@
 
 候选先经过版本化的游戏静态推荐数据检查。对数据库中已覆盖的角色，外圈遗器只接受 `Set4IDList` 中的套装，位面遗器只接受 `Set2IDList` 中的套装；未覆盖角色保持 `Unknown`，不能因知识缺失被误排除。数据库同时保存躯干、脚部、位面球、连结绳主属性候选及副属性候选，但当前只把套装适配用于候选过滤，主副属性仍由 Fribbels 确定性评分处理。
 
+当前 Web 只展示每件遗器的套装匹配状态，尚未展示目标角色的完整推荐套装、各部位主属性候选和副属性候选。这是已知展示缺口；后续应由 Web API 暴露结构化角色推荐档案，再由前端展示，不能在前端复制数据库或规则。
+
 ### 每次强化后重新判断
 
 录入所选遗器的一次强化结果，更新**同一遗器**的等级、属性、预算与历史，再重新评价：
@@ -97,7 +99,7 @@ LLM 不决定优先培养哪个角色，不分配多角色资源，也不直接�
 | Fribbels HSR Optimizer | 通过薄 Adapter 提供确定性评价，优先接入遗器评分和强化潜力；目标角色面板、Build 与伤害评价按闭环需要逐步引入。 |
 | TurnBasedGameData / `AvatarRelicRecommend.json` | 固定 commit 后由独立 Adapter 转为自有 JSON，提供角色—套装、位面和主副属性推荐；不让 Rust core 依赖上游字段。完整原文件不提交到本仓库。 |
 | HSR-Scanner | 已有 v4 fixture 是 Demo 输入；后续完善数据兼容，不集成 OCR 实现。 |
-| Reliquary Archiver | 后续真实账号初始化与重新导入的数据源候选，经导入边界转换为内部账号状态。 |
+| Reliquary Archiver | 已接入 v4 文件导入；Rust importer 校验来源、版本、角色/遗器/光锥与装备关系，再一次性转换为内部 `AccountState`。 |
 | HSR_Nous | 保留已有调研作为参考，当前无集成计划。 |
 
 Fribbels 已通过 Rust 子进程与薄 Node Adapter 交换自有版本化 JSON，接入 RelicScorer 与 simulateBuild；完整配装搜索不作为最小强化闭环的前置条件。v0.2 不带队友，不扩展为队伍培养规划或四人整体伤害优化。
@@ -137,15 +139,21 @@ v0.1 没有真实 LLM、Fribbels 调用、真实资源成本或完整 Build 计�
 
 重要边界：当前旧版 `1205 / 1102` 源码只实现普通攻击与击破，`BASIC` 为 100% ATK 简化普攻；**不是 Blade 生命缩放强化普攻、完整角色输出或 DPS**。它在排序中只是有限的 Build 结构参考，不能把评分潜力推断成未来伤害。角色/光锥只接受 80 级，完整行迹与默认条件为显式假设；不擅自采用 `b1` 角色版本。详细协议、敌人条件和来源见 [Adapter 文档](adapters/fribbels/README.md)。
 
-真实资源成本、游戏 roll 合法性完整验证、持久化、LLM、Reliquary 均未接入。
+真实资源成本和游戏 roll 合法性完整验证仍未接入；Reliquary 文件导入、LLM 与版本化 Session 历史已在后续版本实现。
 
 ### Web Demo：复用 v0.2 闭环
 
-`web/` 展示与输入 → `hsr-relic-web/` 薄 API → 现有 Rust DecisionEngine → Evaluator → Fribbels Adapter。无新增排序或决策算法，CLI 不受影响。API 在独立会话中维护模拟账号，以版本号拒绝过期/重复提交；成功生成评价快照后才提交操作，失败/取消保留先前状态。进度显示任务等待秒数，不虚构内部计算百分比。
+`web/` 展示与输入 → `hsr-relic-web/` 薄 API → 现有 Rust DecisionEngine → Evaluator → Fribbels Adapter。无新增排序或决策算法，CLI 不受影响。API 在独立会话中维护导入账号，以版本号拒绝过期/重复提交；成功生成评价快照后才提交操作，失败/取消保留先前状态。进度显示任务等待秒数，不虚构内部计算百分比。
 
-卡片与页面独立实现；构建时调用上游 `src/lib/rendering/assets.ts` 的 Assets 方法，读取当前 fixture 所需资源映射。前端通过独立 AssetProvider 访问本地图片，不依赖 Fribbels React 组件或 store。上游固定版本、来源文件和图片权利说明见 [Web 文档](web/README.md) 与 [资源致谢](web/credits.html)。未修改第三方源码。
+卡片与页面独立实现；构建时调用上游 `src/lib/rendering/assets.ts` 的 Assets 方法，读取脱敏 Demo 的 64 个角色和 57 种套装所需资源映射。前端通过独立 AssetProvider 访问本地图片，不依赖 Fribbels React 组件或 store。上游固定版本、来源文件和图片权利说明见 [Web 文档](web/README.md) 与 [资源致谢](web/credits.html)。未修改第三方源码。
 
-课堂试用暂用内存会话、固定 8 步预算与当前 fixture，没有公网部署、认证或数据库；服务器重启前需由用户显式保存 Session JSON，之后才能加载恢复。Web 中的简化普攻口径与 v0.2 一致，不代表完整角色输出。
+课堂试用暂用内存会话和固定 8 步预算，没有公网部署、认证或数据库；服务器重启前需由用户显式保存 Session JSON，之后才能加载恢复。Web 中的简化普攻口径与 v0.2 一致，不代表完整角色输出。
+
+### Reliquary v4 账号边界
+
+用户上传与内置脱敏 Demo 都调用同一个 `load_reliquary_v4`，成功后才整体替换会话中的 `AccountState` 和重置基线。导入层保留角色、全部光锥库存、支持的遗器、装备关系、`lock` / `discard`，但不把外部 schema 传入 Decision Engine。结构化错误包含稳定 code 和字段 path，失败不会提交半成品状态，也不会写普通日志。
+
+真实文件可以包含当前强化模型不支持的低稀有度遗器或 `+1/+2/+4` 等中间等级。导入不会篡改这些值：它们保留在原始/脱敏 v4 文件中，并进入摘要的 `relics_skipped`；只有五星 `+0/+3/+6/+9/+12/+15` 检查点进入 `AccountState.relics`。光锥库存完整进入 `AccountState.light_cones`，已装备光锥同时投影到角色评价输入。
 
 ## 8. 后续版本规划
 
@@ -155,7 +163,7 @@ v0.1 没有真实 LLM、Fribbels 调用、真实资源成本或完整 Build 计�
 
 - 优先由输入明确角色技能版本，补齐可靠参考配装，再验证有代表性的单角色伤害动作和未来 Build 收益。
 - 使用对照样例校准潜力/伤害加权、Continue / Hold / Stop 阈值，不把 v0.2 启发式当作最终结论。
-- 更广泛 scanner 导入、真实强化成本与 Reliquary 按后续任务范围接入。
+- 继续扩展中间强化等级和低稀有度遗器模型，并引入真实强化材料成本；不能靠 importer 改写数据规避模型边界。
 - 用一次国服客户端实际响应核对 `GetBigDataAllRecommend` 的百分比字段，再决定是否为静态适配候选补充玩家使用率；使用率只作为经验信号，不取代 Fribbels 数值评价。
 
 ### v0.3：Minimal Agent Runtime（已实现）

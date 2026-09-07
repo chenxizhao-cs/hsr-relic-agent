@@ -17,13 +17,13 @@ pub(super) fn snapshot(data: &SessionData) -> ApiResult<Value> {
     let characters: Vec<_> = a
         .characters
         .values()
-        .map(|c| json!({"id":c.id,"name":c.name,"level":c.level,"eidolon":c.eidolon}))
+        .map(|c| json!({"id":c.id,"name":c.name,"level":c.level,"eidolon":c.eidolon,
+            "has_light_cone":c.light_cone.is_some(),"evaluation_ready":data.evaluator.supports_character(c)}))
         .collect();
     let mut inventory = vec![];
     for r in a.relics.values() {
         // Ask the existing core for selection restrictions; no Web copy of eligibility rules.
-        let mut probe = e.clone();
-        let blocked = probe.select_relic(&r.id).err().map(|error| {
+        let blocked = e.check_relic_selectable(&r.id).err().map(|error| {
             let (code, message) = operation_error(&error);
             json!({"code":code,"message":message})
         });
@@ -65,6 +65,7 @@ pub(super) fn snapshot(data: &SessionData) -> ApiResult<Value> {
         "target_id":e.goal().map(|g| &g.character_id),"selected_id":e.selected().map(|r| &r.id),
         "inventory":inventory,"recommendations":recommendations,"selected_evaluation":selected_evaluation,
         "remaining_budget":a.upgrade_steps,"history":history,"last_result":data.last_result,
+        "account_summary":data.import_summary,
         "model_config":data.model_config.view(),"usage":{"summary":usage,"calls":data.usage.records()},
         "last_agent":data.last_agent}),
     )

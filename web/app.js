@@ -38,6 +38,8 @@ const value = (stat, n) => `${number(n)}${percent(stat) ? '%' : ''}`
 const api = new DemoApi()
 let state, assets, tab = 'ranked', busy = false, timer, progressLabel = '正在处理'
 let taskState = { active: null, tasks: [] }, liveRun = null, selectedTaskId = null, eventSource
+const characterName = (id) => names[id] ?? state?.characters.find((character) => character.id === id)?.name ?? id
+const setName = (id) => sets[id] ?? assets?.setName(id) ?? id
 
 function img(src, cls = '', alt = '') {
   return `<img src="${esc(src)}" class="${cls}" alt="${esc(alt)}" loading="lazy">`
@@ -51,24 +53,30 @@ document.addEventListener('error', (e) => {
 
 function render() {
   $('budget').textContent = state.remaining_budget
+  $('inventory-count').textContent = `${number(state.inventory.length)} RELICS`
   $('evaluator-label').textContent = state.evaluator === 'Mock' ? '◇ Mock 对照模式' : '✦ Fribbels 评价'
+  const summary = state.account_summary
+  $('account-summary').textContent = `${summary.characters} 个角色 · ${summary.relics_imported} / ${summary.relics_in_file} 件遗器进入强化模型 · ${summary.light_cones} 个光锥 · ${summary.equipment_relations_recognized ? '装备关系已识别' : '装备关系待确认'}${summary.relics_skipped ? ` · 跳过 ${summary.relics_skipped} 件非五星或非 +3 检查点遗器` : ''}`
+  $('inventory-source').textContent = summary.source === 'reliquary_archiver' ? `Reliquary v${summary.version}` : summary.source
   $('reset').disabled = busy
+  $('load-demo-account').disabled = busy
+  $('import-account').disabled = busy
   $('model-settings').disabled = busy
   $('save-session').disabled = busy
   $('load-session').disabled = busy
   $('characters').innerHTML = state.characters.map((c) =>
-    `<button class="character-choice ${c.id === state.target_id ? 'selected' : ''}" data-target="${c.id}" ${busy ? 'disabled' : ''} aria-pressed="${
+    `<button class="character-choice ${c.id === state.target_id ? 'selected' : ''} ${c.evaluation_ready ? '' : 'unavailable'}" data-target="${esc(c.id)}" ${busy || !c.evaluation_ready ? 'disabled' : ''} title="${c.evaluation_ready ? '选择为本轮培养目标' : '当前评价器要求角色和已装备光锥均为 80 级'}" aria-pressed="${
       c.id === state.target_id
-    }">${img(assets.character(c.id), 'avatar', names[c.id])}<span>${names[c.id] ?? esc(c.name)}<small>Lv. ${c.level}</small></span><span class="choice-mark">${
+    }">${img(assets.character(c.id), 'avatar', characterName(c.id))}<span>${esc(characterName(c.id))}<small>Lv. ${c.level}${c.evaluation_ready ? '' : ' · 暂不可评价'}</small></span><span class="choice-mark">${
       c.id === state.target_id ? '✦' : '◇'
     }</span></button>`
   ).join('')
   if (state.target_id) {
-    const [name, path, line] = descriptions[state.target_id]
+    const [name, path, line] = descriptions[state.target_id] ?? [characterName(state.target_id).toUpperCase(), '账号角色', '从真实库存中寻找下一件值得投入的遗器。']
     $('character-art').innerHTML = `<div class="orbit"></div>${
-      img(assets.character(state.target_id, 'portrait'), 'portrait', names[state.target_id])
-    }<div class="character-code">${name}</div>`
-    $('character-caption').innerHTML = `<small>${path}</small><h2>${names[state.target_id]} <span>${name}</span></h2><p>${line}</p>`
+      img(assets.character(state.target_id, 'portrait'), 'portrait', characterName(state.target_id))
+    }<div class="character-code">${esc(name)}</div>`
+    $('character-caption').innerHTML = `<small>${esc(path)}</small><h2>${esc(characterName(state.target_id))} <span>${esc(name)}</span></h2><p>${esc(line)}</p>`
     document.body.dataset.character = state.target_id
   } else {
     $('character-art').innerHTML =
@@ -190,18 +198,20 @@ function renderList() {
   const scores = new Map(state.recommendations.map((r) => [r.relic_id, r]))
   const inventory = new Map(state.inventory.map((r) => [r.id, r]))
   // Ordering comes from the API. The browser only joins display data by ID.
-  const rows = tab === 'ranked' ? state.recommendations.map((r) => inventory.get(r.relic_id)) : state.inventory
+  const allRows = tab === 'ranked' ? state.recommendations.map((r) => inventory.get(r.relic_id)) : state.inventory
+  const limit = tab === 'ranked' ? 100 : 200
+  const rows = allRows.slice(0, limit)
   $('relic-list').innerHTML = rows.length
     ? rows.map((r, i) => {
       const score = scores.get(r.id)
       const badge = r.blocked ? (r.decision ?? '已保护') : r.decision === 'Hold' ? '恢复观察' : tab === 'ranked' && i === 0 ? '首选候选' : slots[r.slot]
-      return `<button class="relic-card ${state.selected_id === r.id ? 'selected' : ''}" data-relic="${r.id}" ${busy || r.blocked ? 'disabled' : ''} title="${
+      return `<button class="relic-card ${state.selected_id === r.id ? 'selected' : ''}" data-relic="${esc(r.id)}" ${busy || r.blocked ? 'disabled' : ''} title="${
         esc(r.blocked?.message ?? score?.reason ?? '选择这件遗器')
       }" aria-pressed="${state.selected_id === r.id}"><div class="relic-thumb">${
         img(assets.relic(r), '', slots[r.slot])
       }<span>+${r.level}</span></div><div class="relic-info"><div class="relic-card-top"><span class="card-badge ${badge === '首选候选' ? 'gold' : ''}">${
         esc(badge)
-      }</span><small>#${r.id}</small></div><h3>${sets[r.set_id] ?? esc(r.set_id)}</h3>${
+      }</span><small>#${esc(r.id)}</small></div><h3>${esc(setName(r.set_id))}</h3>${
         r.set_match === 'recommended'
           ? '<small class="static-fit recommended">游戏静态推荐套装</small>'
           : r.set_match === 'not_recommended'
@@ -214,9 +224,9 @@ function renderList() {
           ? `<div class="card-score"><span>当前 <b>${number(score.current_score)}</b></span><span>平均潜力 <b>${number(score.projected_score)}</b></span></div>`
           : `<small class="blocked-note">${esc(r.blocked?.message ?? '可手动选择并观察')}</small>`
       }</div></button>`
-    }).join('')
+    }).join('') + (allRows.length > limit ? `<div class="list-limit">为保持页面流畅，当前显示前 ${limit} / ${allRows.length} 件；排序和决策仍使用完整库存。</div>` : '')
     : `<div class="empty"><span>◇</span><p>${state.target_id ? '暂无可推荐的候选' : '推荐将在这里出现'}</p><small>${
-      state.target_id ? '查看全部库存，或重置本次试用' : '先在左侧选择刃或希儿'
+      state.target_id ? '查看全部库存，或重置本次试用' : '先从账号角色中选择培养目标'
     }</small></div>`
 }
 function renderDetail() {
@@ -233,10 +243,10 @@ function renderDetail() {
   }
   const ev = state.selected_evaluation
   $('detail').innerHTML = `<div class="relic-display"><div class="relic-halo"></div>${
-    img(assets.relic(r), 'large-relic', sets[r.set_id])
-  }<div class="relic-title"><div class="stars">★★★★★ <span>+${r.level}</span></div><h2>${sets[r.set_id]}</h2><p>${
+    img(assets.relic(r), 'large-relic', setName(r.set_id))
+  }<div class="relic-title"><div class="stars">★★★★★ <span>+${r.level}</span></div><h2>${esc(setName(r.set_id))}</h2><p>${
     slots[r.slot]
-  } <span> / </span> #${r.id}</p></div></div><div class="detail-body"><div class="main-stat">${img(assets.stat(r.main_stat))}<span>主属性</span><strong>${
+  } <span> / </span> #${esc(r.id)}</p></div></div><div class="detail-body"><div class="main-stat">${img(assets.stat(r.main_stat))}<span>主属性</span><strong>${
     stats[r.main_stat]
   }</strong></div><div class="substats">${
     Object.entries(r.substats).map(([s, n]) => `<div>${img(assets.stat(s))}<span>${stats[s]}</span><b>${value(s, n)}</b></div>`).join('')
@@ -260,7 +270,7 @@ function renderDetail() {
         number(ev.details.relic.best)
       }</p><p>参考配装替换后：HP ${number(ev.details.candidate_build.panel.hp)} · ATK ${number(ev.details.candidate_build.panel.atk)} · SPD ${
         number(ev.details.candidate_build.panel.speed)
-      }</p><p>简化普攻 ${number(ev.details.candidate_build.basic_damage)}；参考 ${
+      }</p><p>固定条件 BASIC 指标 ${number(ev.details.candidate_build.basic_damage)}；参考 ${
         number(ev.details.reference_build.basic_damage)
       }。这不代表完整角色输出。</p><p>参考六件 ${esc(ev.details.reference.relic_ids.join('、'))}；补齐部位 ${
         ev.details.reference.assumed_slots.map((s) => slots[s]).join('、') || '无'
@@ -291,7 +301,7 @@ function renderHistory() {
   $('history').className = state.history.length ? 'history-list' : 'history-empty'
   $('history').innerHTML = state.history.length
     ? [...state.history].reverse().map((r, i) =>
-      `<div class="history-row"><span class="history-index">${String(state.history.length - i).padStart(2, '0')}</span><span>${names[r.character_id]} <small>#${
+      `<div class="history-row"><span class="history-index">${String(state.history.length - i).padStart(2, '0')}</span><span>${esc(characterName(r.character_id))} <small>#${
         esc(r.relic_id)
       }</small></span><span>+${r.before_level} <i>→</i> +${r.after_level}</span><span>${stats[r.stat]} +${
         value(r.stat, r.increase)
@@ -338,6 +348,27 @@ async function perform(action) {
       $('increase').value = draft.increase
     }
     if (!failed && action.action === 'upgrade') $('result-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }
+}
+
+async function replaceAccount(loader, progress) {
+  if (busy) return
+  busy = true
+  $('error').hidden = true
+  $('progress').hidden = false
+  $('progress-text').textContent = progress
+  render()
+  try {
+    state = await loader()
+    tab = 'ranked'
+    $('error').hidden = true
+  } catch (e) {
+    $('error').textContent = e.message
+    $('error').hidden = false
+  } finally {
+    busy = false
+    $('progress').hidden = true
+    render()
   }
 }
 
@@ -402,6 +433,30 @@ $('reset-yes').onclick = () => {
 }
 $('guide-button').onclick = () => $('guide-dialog').showModal()
 $('guide-close').onclick = () => $('guide-dialog').close()
+$('load-demo-account').onclick = () => {
+  if (!window.confirm('加载示例账号会替换当前遗器状态和强化记录，Agent 对话与任务历史会保留。是否继续？')) return
+  replaceAccount(() => api.loadDemoAccount(state.revision), '正在加载脱敏示例账号…')
+}
+$('import-account').onclick = () => $('account-file').click()
+$('account-file').onchange = async () => {
+  const file = $('account-file').files[0]
+  $('account-file').value = ''
+  if (!file) return
+  if (file.size > 7 * 1024 * 1024) {
+    $('error').textContent = 'Reliquary JSON 超过 7 MiB，当前 Demo 无法导入。'
+    $('error').hidden = false
+    return
+  }
+  let account
+  try {
+    account = JSON.parse(await file.text())
+  } catch {
+    $('error').textContent = '所选文件不是有效的 JSON。'
+    $('error').hidden = false
+    return
+  }
+  await replaceAccount(() => api.importAccount(account, state.revision), '正在校验并导入 Reliquary 账号…')
+}
 $('agent-form').onsubmit = (event) => {
   event.preventDefault()
   performAgent($('agent-input').value)

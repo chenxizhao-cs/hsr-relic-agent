@@ -32,7 +32,7 @@ cargo run
 | 字段 | 内容 |
 |---|---|
 | `schema_version` | 必须为 `1` |
-| `character` | `id`、`level`、`eidolon`、`light_cone: {id, level, superimposition}`；当前只支持未强化版 `1205` / `1102`、角色与光锥均 80 级、同命途光锥 |
+| `character` | `id`、`level`、`eidolon`、`light_cone: {id, level, superimposition}`；ID 必须存在于固定 Fribbels 元数据，角色与光锥均 80 级且命途兼容 |
 | `relics[]` | `id, slot, set_id, rarity, level, main_stat, substats`；五星、+3 检查点，`substats` 是属性到数值的对象 |
 | `builds[]` | `{id, relic_ids}`；每个 Build 必须六个不同 ID，六部位齐全；Rust 构造参考 Build 和逐件同部位替换 Build，Adapter 不选择配装 |
 | `conditions` | `preset: "solo-default-v1"`、`enemy_level`（1..100）、`enemy_resistance_pct`（0..100）、`elemental_weakness`、`weakness_broken` |
@@ -56,7 +56,7 @@ Rust 对外另提供可序列化的 `EvaluationDetails`，包含上述数值、�
 
 `basic_damage` 是上游 `simulateBuild(...).actionDamage.BASIC`，含上游暴击期望和敌人/光锥/套装计算，但**不是完整角色伤害、DPS、四人队伍总伤害或满级潜力对应的未来伤害**。
 
-当前固定源码中 `Blade.ts` / `Seele.ts` 的旧版 ID 只定义 BASIC（100% ATK）和 BREAK，缺少完整技能实现；因此本版尤其不能据此评价 Blade 的生命缩放强化普攻。协议明确标识 `legacy_atk_basic_v1`。本轮尊重 fixture 的 `ability_version: 0`，没有偷偷改用 `1205b1 / 1102b1`。
+当前固定源码中 `Blade.ts` / `Seele.ts` 的旧版 ID 只定义 BASIC（100% ATK）和 BREAK，缺少完整技能实现；因此本版尤其不能据此评价 Blade 的生命缩放强化普攻。协议仍明确标识 `legacy_atk_basic_v1`。Reliquary 的 `ability_version` 尚未进入内部模型，Adapter 当前按基础角色 ID 评价，不会自行切换 `b1` 版本。
 
 `solo-default-v1`：无队友、单个敌人、默认 95 级、有属性弱点、未击破、韧性 360、效果抵抗 30%；角色、光锥、套装使用固定上游默认开关，额外战斗 buff 为零。配置抗性默认 20%，但上游在有属性弱点时有效伤害抗性为 0；无弱点时才使用该值。
 
@@ -66,7 +66,7 @@ Rust 对外另提供可序列化的 `EvaluationDetails`，包含上述数值、�
 
 - 参考 Build 优先使用目标角色已装备遗器；缺失部位按库存 ID 取第一件未装备、未锁定、未弃置的遗器。这不是优化结果，不写回装备关系。缺少某个可用部位则报错，不造假遗器。Hold/Stop 不等于弃置，仍可在参考配装中作保留件。
 - 一次批量评价覆盖库存与所有单部位替换；完整输入作为缓存键（最多 4 个快照），避免同 ID 升级后沿用旧分数。上游静态 scorer 每次新建评分缓存，Build 之间隔离可变对象。
-- 默认 20 秒超时，1 秒一次等待进度回调；`FribbelsConfig.cancelled` 支持其他交互层打断，CLI 终端支持 Ctrl+C。超时/取消会终止并回收当前子进程。输入输出都有大小界限。
+- 默认 120 秒超时，1 秒一次等待进度回调；`FribbelsConfig.cancelled` 支持其他交互层打断，CLI 终端支持 Ctrl+C。超时/取消会终止并回收当前子进程。单批最多 4000 件遗器，输入输出上限 8 MiB，以覆盖真实 Reliquary 库存。
 - 子进程、JSON、版本或指标错误均上报；强化状态先暂存，重评估全部成功后才提交账号、预算、选择和历史。
 
 依赖来源：[Fribbels HSR Optimizer](https://github.com/fribbels/hsr-optimizer)，固定 SHA 见上文，MIT，版权 Fribbels 2024。入口索引沿用已有 research；本轮未修改第三方源码。

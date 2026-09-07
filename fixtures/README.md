@@ -13,6 +13,9 @@
 
 - `scanner-v4-minimal.json`：保持当前 `ScannerParserJson` v4 类型的完整顶层形状，包含 Blade、其光锥和 3 件遗器。
 - `scanner-v4-demo.json`：包含 Blade、Seele、两件光锥和 12 件不同等级/培养价值的候选遗器。
+- `reliquary-v4-demo.json`：由真实 Reliquary Archiver v4 导出重复清洗得到的长期 Web Demo，保留 64 个角色、3001 件遗器、391 个光锥和装备/锁定/弃置状态。玩家 UID 和开拓者选择已删除，抽卡资源归零、材料移除，遗器和光锥 `_uid` 已替换。生成规则见 [`adapters/reliquary/README.md`](../adapters/reliquary/README.md)。
+
+Rust Reliquary importer 会从这 3001 件源遗器中接收 2971 件五星、+3 检查点遗器，另 30 件低稀有度或中间强化等级遗器保持在 v4 文件中并计入跳过摘要。Web 内置 Demo 和用户上传原始 JSON 使用同一个 importer。
 
 ## Demo 使用顺序
 

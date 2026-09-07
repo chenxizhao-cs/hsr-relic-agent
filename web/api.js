@@ -10,7 +10,8 @@ export class DemoApi {
     })
     const data = await response.json()
     if (!response.ok) {
-      const error = new Error(data.error?.message ?? '服务暂时无法处理这次操作。')
+      const location = data.error?.path ? `（${data.error.path}）` : ''
+      const error = new Error(`${data.error?.message ?? '服务暂时无法处理这次操作。'}${location}`)
       error.code = data.error?.code
       throw error
     }
@@ -46,6 +47,12 @@ export class DemoApi {
   }
   importSession(session, revision) {
     return this.request('session/import', { session, expected_revision: revision })
+  }
+  loadDemoAccount(revision) {
+    return this.request('account/demo', { expected_revision: revision })
+  }
+  importAccount(account, revision) {
+    return this.request('account/import', { account, expected_revision: revision })
   }
   events(onTrace) {
     const source = new EventSource(`/api/events?session=${encodeURIComponent(this.token)}`)

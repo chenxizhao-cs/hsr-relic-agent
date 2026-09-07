@@ -50,18 +50,18 @@ const integer = (n: unknown, min: number, max: number) => finite(n) && Number.is
 function evaluate(input: Input) {
   check(input.schema_version === 1, 'Unsupported schema_version')
   const c = input.character
-  check(c && ['1205', '1102'].includes(c.id), 'v0.2 supports unbuffed Blade / Seele only')
+  const metadata = getGameMetadata()
+  check(c && metadata.characters[c.id as CharacterId], 'Unknown or unsupported character')
   check(c.level === 80 && c.light_cone?.level === 80, 'v0.2 requires level 80 character and light cone')
   check(integer(c.eidolon, 0, 6) && integer(c.light_cone.superimposition, 1, 5), 'Invalid eidolon/superimposition')
-  const metadata = getGameMetadata()
   check(metadata.lightCones[c.light_cone.id as LightConeId]?.path === metadata.characters[c.id as CharacterId].path, 'Unknown or incompatible light cone')
   const conditions = input.conditions
   check(conditions?.preset === 'solo-default-v1', 'Unsupported combat preset')
   check(integer(conditions.enemy_level, 1, 100)
     && finite(conditions.enemy_resistance_pct) && conditions.enemy_resistance_pct >= 0 && conditions.enemy_resistance_pct <= 100
     && typeof conditions.elemental_weakness === 'boolean' && typeof conditions.weakness_broken === 'boolean', 'Invalid enemy conditions')
-  check(Array.isArray(input.relics) && input.relics.length > 0 && input.relics.length <= 2000, 'Invalid relic batch size')
-  check(Array.isArray(input.builds) && input.builds.length <= 2001, 'Invalid build batch size')
+  check(Array.isArray(input.relics) && input.relics.length > 0 && input.relics.length <= 4000, 'Invalid relic batch size')
+  check(Array.isArray(input.builds) && input.builds.length <= 4001, 'Invalid build batch size')
   const ids = new Set<string>()
   const relics = input.relics.map((item, ageIndex) => {
     check(typeof item.id === 'string' && item.id.length > 0 && !ids.has(item.id), 'Invalid/duplicate relic id')
@@ -131,7 +131,7 @@ try {
   let text = ''
   for await (const chunk of process.stdin) {
     text += chunk.toString()
-    check(Buffer.byteLength(text) <= 4 * 1024 * 1024, 'Input exceeds 4 MiB')
+    check(Buffer.byteLength(text) <= 8 * 1024 * 1024, 'Input exceeds 8 MiB')
   }
   Metadata.initialize()
   const result = evaluate(JSON.parse(text))

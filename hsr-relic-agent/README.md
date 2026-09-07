@@ -94,7 +94,7 @@ Fribbels 提供：当前原始评分与评级、同口径 current / average / be
 
 **伤害限制**：当前 fixture 的未强化版 Blade / Seele 在固定上游仅实现 100% ATK 普通攻击和击破。此处展示/比较 `actionDamage.BASIC` 的暴击期望，尤其不代表 Blade 的生命缩放强化普攻；不是完整角色输出、DPS 或队伍总伤害。默认无队友、95 级单体、有属性弱点且未击破；角色/光锥 80 级、完整行迹和固定上游开关。协议以 `legacy_atk_basic_v1` 标明这个限制，未擅自改用 buffed 版本。
 
-Rust API 使用 `DecisionEngine::new(account, FribbelsEvaluator::new(FribbelsConfig::default()))` 即可，无需 CLI。配置提供敌人条件、Node/bundle 路径、20 秒默认超时、进度回调和取消标记；等待时每秒通知，CLI 可 Ctrl+C。每次批量计算，缓存按完整输入区分，升级后的同 ID 必须重新计算；失败不提交状态。
+Rust API 使用 `DecisionEngine::new(account, FribbelsEvaluator::new(FribbelsConfig::default()))` 即可，无需 CLI。配置提供敌人条件、Node/bundle 路径、120 秒默认超时、进度回调和取消标记；等待时每秒通知，CLI 可 Ctrl+C。每次批量计算，缓存按完整输入区分，升级后的同 ID 必须重新计算；失败不提交状态。
 
 协议、完整口径与来源见 [Fribbels Adapter 文档](../adapters/fribbels/README.md) 和 [静态推荐 Adapter 文档](../adapters/recommendations/README.md)。
 
@@ -132,10 +132,11 @@ Rust API 使用 `DecisionEngine::new(account, FribbelsEvaluator::new(FribbelsCon
 
 ## 仍然保留的边界与后续替换点
 
-- 当前导入层支持现有 fixture 所用的 v4 子集：五星遗器、0/3/6/9/12/15 检查点，显式 `ability_version: 0`。不是完整通用 scanner importer。未知副属性、重复 ID、无效装备关联等返回错误。头/手主属性固定为 HP/ATK，与既有 fixture 约定一致。
-- 字段映射只在 `import.rs`，业务层只使用内部 `Stat` / `Slot` / `AccountState`。保留角色/光锥基础信息、套装 ID、装备关联、锁定/丢弃标记；忽略 metadata、gacha、materials、ascension、预览/重掷字段等未消费数据。没有完整行迹、库存材料或主属性数值模型。
+- `load_scanner_v4` 继续作为小型回归 fixture 的严格入口；`load_reliquary_v4` 面向真实 Reliquary Archiver v4，校验来源、版本、角色、全部光锥、遗器和装备关系，并返回结构化 error code/path 与导入摘要。
+- 当前强化模型仍只接收五星遗器的 0/3/6/9/12/15 检查点。真实文件中的低稀有度和中间等级遗器不会被改写，而是计入 `relics_skipped`；完整脱敏 v4 文件仍保留它们。
+- 字段映射只在 `import.rs`，业务层只使用内部 `Stat` / `Slot` / `AccountState`。内部账号保留角色、完整光锥库存、可评价遗器、套装 ID、装备关联、锁定/丢弃标记；忽略玩家 UID、gacha、materials、ascension、技能/行迹、预览/重掷和副属性 count/step 等当前未消费数据。
 - `Evaluator` 已接入确定性评分，Mock 显式保留；后续最值得先明确角色技能版本、完整参考配装和有代表性的伤害动作，再校准策略。
 - 步数预算仍是模拟资源，不验证剩余预算能否升满；正增量仍只验证形状、有限值与词条规则，不验证所有游戏 roll 档位/数值上限。真实模式会由上游修正词条精度，并按等级重算主属性，但不把修正后的值反写账号。
-- 历史仅在内存；持久化、LLM、真实账号采集和完整课程 R1–R6 外围功能仍未实现。真实模式没有 Mock 评分参与，但输入、成本与策略假设仍是 Demo。
+- CLI 历史仍只在内存；Web 层已经提供 Reliquary 文件导入、LLM、Trace 与 Session JSON 保存/加载。真实模式没有 Mock 评分参与，但输入、成本与策略假设仍是 Demo。
 
 输入格式与素材来源见 [`fixtures/README.md`](../fixtures/README.md)；设计边界见 [`DESIGN.md`](../DESIGN.md)。本轮未复制第三方业务源码，未修改 `upstream/`；Mock 公式是本项目演示规则，不是 Fribbels 算法。

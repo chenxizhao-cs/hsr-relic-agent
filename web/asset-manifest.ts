@@ -13,7 +13,7 @@ import {
 import { resolve } from 'node:path'
 
 const root = process.argv[2]
-const fixture = JSON.parse(readFileSync(resolve(root, 'fixtures/scanner-v4-demo.json'), 'utf8'))
+const fixture = JSON.parse(readFileSync(resolve(root, 'fixtures/reliquary-v4-demo.json'), 'utf8'))
 const local = (url: string) => {
   const path = new URL(url).pathname
   const relative = path.slice(path.indexOf('/assets/') + '/assets/'.length)
@@ -65,11 +65,17 @@ const relics = Object.fromEntries([...new Set(fixture.relics.map((r: { set_id: s
     ),
   ]
 }))
+const relicSetNames = Object.fromEntries([...new Set(fixture.relics.map((r: { set_id: string }) => r.set_id))].map((id) => {
+  const set = gameData.relics.find((r) => r.id === id)
+  if (!set) throw new Error(`Unknown set ${id}`)
+  return [id, set.name]
+}))
 const manifest = {
   source: 'Fribbels Assets',
   upstream_commit: 'df630a0488a64eeb740e4e0c14f265d96b9f6f8f',
   characters,
   relics,
+  relic_set_names: relicSetNames,
   stats: Object.fromEntries(Object.entries(stats).map(([key, stat]) => [key, local(Assets.getStatIcon(stat))])),
   star: local(Assets.getStar()),
   fallback: local(Assets.getDefaultRelic()),
