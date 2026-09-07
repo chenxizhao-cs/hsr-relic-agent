@@ -1,8 +1,12 @@
 use crate::{ModelConfig, TokenUsage};
-use reqwest::blocking::Client;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{fmt, time::Duration};
+use std::{
+    fmt,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -19,10 +23,15 @@ pub struct ModelToolCall {
     pub raw_arguments: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "role", rename_all = "snake_case")]
 pub enum ChatMessage {
-    System(String),
-    User(String),
+    System {
+        content: String,
+    },
+    User {
+        content: String,
+    },
     Assistant {
         content: Option<String>,
         tool_calls: Vec<ModelToolCall>,
@@ -56,6 +65,7 @@ pub enum ProviderError {
     HttpStatus { status: u16, message: String },
     InvalidResponse(String),
     MissingUsage,
+    Cancelled,
 }
 
 impl fmt::Display for ProviderError {
@@ -70,6 +80,7 @@ impl fmt::Display for ProviderError {
             Self::MissingUsage => {
                 f.write_str("模型响应没有 usage，无法精确统计 Token；本次结果不接受")
             }
+            Self::Cancelled => f.write_str("模型请求已取消"),
         }
     }
 }
@@ -81,6 +92,7 @@ pub trait ModelProvider: Send + Sync {
         &self,
         config: &ModelConfig,
         request: &ProviderRequest,
+        cancelled: &AtomicBool,
     ) -> Result<ModelResponse, ProviderError>;
 }
 
@@ -119,6 +131,7 @@ impl ModelProvider for OpenAiCompatibleProvider {
         &self,
         config: &ModelConfig,
         request: &ProviderRequest,
+        cancelled: &AtomicBool,
     ) -> Result<ModelResponse, ProviderError> {
         let messages: Vec<_> = request.messages.iter().map(message_json).collect();
         let tools: Vec<_> = request.tools.iter().map(|tool| json!({
@@ -142,13 +155,33 @@ impl ModelProvider for OpenAiCompatibleProvider {
         if !config.api_key().is_empty() {
             call = call.bearer_auth(config.api_key());
         }
-        let response = call.send().map_err(|error| {
-            ProviderError::RequestFailed(redact_secret(error.to_string(), config.api_key()))
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| ProviderError::RequestFailed(error.to_string()))?;
+        let (status, bytes) = runtime.block_on(async {
+            let mut request = Box::pin(call.send());
+            let response = loop {
+                tokio::select! {
+                    response = &mut request => {
+                        break response.map_err(|error| {
+                            ProviderError::RequestFailed(redact_secret(error.to_string(), config.api_key()))
+                        })?;
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(25)) => {
+                        if cancelled.load(Ordering::SeqCst) {
+                            return Err(ProviderError::Cancelled);
+                        }
+                    }
+                }
+            };
+            let status = response.status();
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+            Ok((status, bytes))
         })?;
-        let status = response.status();
-        let bytes = response
-            .bytes()
-            .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
         if !status.is_success() {
             let message = serde_json::from_slice::<Value>(&bytes)
                 .ok()
@@ -215,8 +248,8 @@ fn redact_secret(message: String, secret: &str) -> String {
 
 fn message_json(message: &ChatMessage) -> Value {
     match message {
-        ChatMessage::System(content) => json!({"role":"system","content":content}),
-        ChatMessage::User(content) => json!({"role":"user","content":content}),
+        ChatMessage::System { content } => json!({"role":"system","content":content}),
+        ChatMessage::User { content } => json!({"role":"user","content":content}),
         ChatMessage::Assistant {
             content,
             tool_calls,
@@ -274,8 +307,9 @@ mod tests {
     use std::{
         io::{Read, Write},
         net::TcpListener,
-        sync::mpsc,
+        sync::{Arc, mpsc},
         thread,
+        time::Instant,
     };
 
     #[test]
@@ -353,10 +387,13 @@ mod tests {
             .complete(
                 &config,
                 &ProviderRequest {
-                    messages: vec![ChatMessage::User("hello".into())],
+                    messages: vec![ChatMessage::User {
+                        content: "hello".into(),
+                    }],
                     tools: vec![],
                     require_tool: false,
                 },
+                &AtomicBool::new(false),
             )
             .unwrap();
         assert_eq!(
@@ -376,5 +413,51 @@ mod tests {
         assert_eq!(body["model"], "test-model");
         assert_eq!(body["reasoning_effort"], "low");
         assert_eq!(body["max_completion_tokens"], 2048);
+    }
+
+    #[test]
+    fn cancellation_interrupts_waiting_http_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_secs(2));
+        });
+        let mut config = ModelConfig::default();
+        config
+            .apply(ModelConfigPatch {
+                endpoint: format!("http://{address}/v1"),
+                api_key: None,
+                clear_api_key: false,
+                model: "test-model".into(),
+                context_length: 2048,
+                reasoning_mode: ReasoningMode::Disabled,
+                input_price_per_million: 0.0,
+                output_price_per_million: 0.0,
+                token_budget: 1000,
+            })
+            .unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let trigger = cancelled.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            trigger.store(true, Ordering::SeqCst);
+        });
+        let started = Instant::now();
+        let error = OpenAiCompatibleProvider::default()
+            .complete(
+                &config,
+                &ProviderRequest {
+                    messages: vec![ChatMessage::User {
+                        content: "hello".into(),
+                    }],
+                    tools: vec![],
+                    require_tool: false,
+                },
+                &cancelled,
+            )
+            .unwrap_err();
+        assert_eq!(error, ProviderError::Cancelled);
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

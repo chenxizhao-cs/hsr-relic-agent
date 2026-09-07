@@ -80,7 +80,7 @@ impl Default for ModelConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelConfigView {
     pub endpoint: String,
     pub api_key_configured: bool,

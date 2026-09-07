@@ -77,7 +77,7 @@ cargo run --manifest-path hsr-relic-web/Cargo.toml
 
 > 我想培养 Blade，材料比较紧，帮我看看下一件最值得强化什么。
 
-Agent 会调用 Rust Tools 设置目标并查询推荐。页面可以展开查看本轮模型请求、Tool 输入输出和真实 Token usage。
+Agent 会调用 Rust Tools 设置目标并查询推荐。页面会通过 SSE 实时追加模型请求、Tool 进度、确定性决策和真实 Token usage；任务运行时可以点击“取消本次计算”。
 
 LLM 不自己计算遗器分数，也不重新实现候选排序。完整链路是：
 
@@ -107,6 +107,21 @@ Web 设置支持：
 API Key 只保存在当前 Rust 服务的内存会话中，不写入浏览器存储或普通 API 响应。价格由使用者按自己的服务填写，单位是“所选货币 / 1M tokens”；默认价格为 0，项目不会内置可能过期的价格。
 
 每次成功的模型响应必须包含真实 input/output usage。系统不会自行估算 Token；累计用量达到预算后，会在下一次模型请求发出前停止。
+
+## 实时进度、历史与 Session JSON
+
+每次 Agent 任务都会产生统一的结构化 Trace。Web 实时显示当前阶段和真实等待时间，不虚构百分比；同一批事件在任务结束后进入“Agent 会话与任务历史”，包括用户消息、模型调用、Tool Call、Tool Result、Rust 决策、usage、回复、错误或取消原因。
+
+页面中的“保存 JSON”会下载版本化的完整会话，包含：
+
+- 多轮模型 messages；
+- 全部 Agent 任务及事件 Trace；
+- 遗器账号状态、目标、当前选择、强化历史与预算；
+- usage、费用和不含密钥的模型配置。
+
+“加载 JSON”可以恢复这些内容并继续对话。API Key 有意不写入文件；加载后沿用目标 Web 会话当前服务端保存的 Key，必要时请重新在模型设置中填写。
+
+取消不是前端隐藏结果：请求会传播到 Agent Runtime；等待模型时会中止 HTTP future，Fribbels 计算时会终止 Node 子进程。取消前已经完成的 Trace、usage 和 Tool 状态会保留。
 
 也可以在启动前通过环境变量设置默认值：
 
@@ -161,21 +176,20 @@ cargo test --manifest-path hsr-relic-web/Cargo.toml --test agent_e2e -- --ignore
 
 ## 当前版本边界
 
-Demo v0.3 已实现：
+当前 Demo 已实现：
 
 - 自有 Rust `AccountState` 和强化状态更新；
 - Fribbels 遗器当前评分、平均满级潜力及参考 Build 数值；
 - Rust 候选排序和 Continue / Hold / Stop；
 - Web 与 CLI 共用同一个 core；
 - LLM Tool 调用、模型配置、真实 Token usage、费用和 Token Budget；
-- 内存会话中的强化历史和最近一次 Agent 轨迹。
+- SSE 实时 Agent Trace，以及可向模型请求和 Fribbels 子进程传播的取消；
+- 多轮模型上下文、历史任务浏览和版本化 Session JSON 保存/加载。
 
 仍未实现：
 
 - 真实游戏账号导入；
 - 完整角色技能、完整队伍 DPS 或最终概率模型；
-- R4 完整实时事件流和可立即中止的模型网络请求；
-- R5 多轮上下文、历史任务持久化与保存/加载；
 - 公网部署所需的认证、TLS 和密钥管理。
 
 旧版 Blade / Seele 的当前伤害指标只是 Fribbels 中的简化普通攻击参考，不能视为完整实战收益。当前强化步数、阈值和 fixture 都是课堂 Demo 假设。

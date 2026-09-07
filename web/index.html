@@ -12,7 +12,7 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="遗器培养终端首页"><span class="brand-mark">✦</span><span>遗器培养终端<small>RELIC CULTIVATION TERMINAL</small></span></a>
     <nav aria-label="页面导航"><span class="nav-active">强化工作台</span><button id="guide-button" class="text-button">试用指南 ↗</button></nav>
-    <div class="header-right"><span class="online"><i></i> DEMO / 03</span><button id="model-settings" class="outline-button" disabled>模型设置</button><button id="reset" class="outline-button" disabled>↺ 重置试用</button></div>
+    <div class="header-right"><span class="online"><i></i> DEMO / R4+R5</span><button id="model-settings" class="outline-button" disabled>模型设置</button><button id="reset" class="outline-button" disabled>↺ 重置试用</button></div>
   </header>
   <main>
     <div class="page-heading"><div><div class="eyebrow">ASTRAL WORKSHOP <span> / </span> 遗器培养</div><h1>让每一次强化，更有方向。</h1><p>选定你的目标角色，找到下一件值得投入的遗器。</p></div><div class="budget"><span class="budget-glyph">✧</span><div><small>剩余强化预算</small><strong id="budget">—</strong><span> / 8 步</span></div></div></div>
@@ -24,13 +24,18 @@
         <div class="panel-label"><span>培养 Agent <small class="agent-badge">LLM + TOOLS</small></span><small id="agent-model">等待配置</small></div>
         <div id="agent-reply" class="agent-reply"><span class="agent-mark">✦</span><div><strong>用自然语言告诉我目标</strong><p>例如：我想培养 Blade，材料比较紧，帮我看看下一件最值得强化什么。</p></div></div>
         <form id="agent-form" class="agent-form"><label for="agent-input" class="sr-only">培养目标</label><textarea id="agent-input" maxlength="4000" rows="2" placeholder="描述你已经决定培养的角色和要求…" required></textarea><button id="agent-submit" class="primary-button" type="submit">交给 Agent <span>↗</span></button></form>
-        <details id="agent-trace" class="agent-trace" hidden><summary>查看本轮 Agent → Tool 轨迹</summary><div id="agent-events"></div></details>
+        <details id="agent-trace" class="agent-trace" hidden open><summary>实时 Agent → Tool 轨迹</summary><div id="agent-events"></div></details>
       </div>
       <aside class="usage-panel" aria-label="Token 和费用统计">
         <div class="usage-heading"><span>用量与预算</span><small>REAL API USAGE</small></div>
         <div class="usage-grid"><div><small>输入</small><strong id="usage-input">0</strong><span>tokens</span></div><div><small>输出</small><strong id="usage-output">0</strong><span>tokens</span></div><div><small>调用</small><strong id="usage-calls">0</strong><span>calls</span></div><div><small>累计费用</small><strong id="usage-cost">0</strong><span>配置价格单位</span></div></div>
         <div class="token-budget"><div><span>Token Budget</span><b id="usage-budget-label">0 / 0</b></div><progress id="usage-budget" value="0" max="1"></progress><small>只使用 API 响应中的真实 usage，不估算。</small></div>
       </aside>
+    </section>
+    <section class="task-history-panel panel" aria-label="Agent 会话与任务历史">
+      <div class="panel-label"><span>Agent 会话与任务历史 <span id="task-count" class="count-badge">0</span></span><div class="session-actions"><button id="save-session" class="outline-button" disabled>保存 JSON</button><button id="load-session" class="outline-button" disabled>加载 JSON</button><input id="session-file" type="file" accept="application/json,.json" hidden></div></div>
+      <div class="task-history-layout"><div id="task-list" class="task-list"><div class="history-empty">完成一次 Agent 任务后，可以在这里查看完整 Trace。</div></div><div id="task-detail" class="task-detail"><div class="history-empty">选择一个历史任务，查看用户消息、模型调用、Tool、决策、Usage 和结果。</div></div></div>
+      <p class="session-note">导出文件包含多轮模型上下文、任务 Trace、Token/费用、遗器账号状态、目标和强化历史；不会包含 API Key。加载后可继续对话，Key 沿用当前服务端会话配置。</p>
     </section>
     <div class="workbench">
       <aside class="character-panel panel"><div class="panel-label"><span>培养目标</span><small>CHARACTER</small></div><div id="characters" class="character-buttons"></div><div id="character-art" class="character-art"><div class="orbit"></div><div class="character-placeholder">✧<p>选择一位同行者</p><small>本次只围绕一个角色培养</small></div></div><div id="character-caption" class="character-caption"><small>YOUR NEXT UPGRADE</small><h2>从一个目标开始</h2><p>从账号库存出发，让已有的遗器发挥价值。</p></div></aside>
@@ -39,10 +44,10 @@
     </div>
     <section id="result-panel" class="result-panel" aria-live="polite" hidden></section>
     <section class="history-panel panel"><div class="panel-label"><span>本次强化记录 <span id="history-count" class="count-badge">0</span></span><small>OBSERVATION LOG</small></div><div id="history" class="history-empty">每一次观察都会留在这里。重新加载页面可继续本次试用。</div></section>
-    <details class="limits"><summary>关于这次试用与评价口径</summary><p>使用模拟账号，每次 +3 消耗 1 个演示步数；强化结果由你手动录入，不会操作游戏。Stop 表示对当前目标停止投入，不会弃置或分解遗器。独立打开地址创建独立试用会话，复制标签页可能继承同一会话。状态仅保留在服务内存中，重启服务后清空。</p><p>默认使用 Fribbels 的真实遗器评分与强化潜力。缺失配装的部位使用库存补齐作参考。当前旧版刃/希儿的伤害实现仅覆盖简化普攻（100% ATK），不可视为完整角色输出；角色与光锥按 80 级、完整行迹、无队友、95 级有弱点且未击破敌人计算。决策阈值和步数成本仍为 Demo 假设。</p></details>
+    <details class="limits"><summary>关于这次试用与评价口径</summary><p>使用模拟账号，每次 +3 消耗 1 个演示步数；强化结果由你手动录入，不会操作游戏。Stop 表示对当前目标停止投入，不会弃置或分解遗器。独立打开地址创建独立试用会话，复制标签页可能继承同一会话。服务重启会清空内存状态，但可以提前保存 Session JSON，重启后重新加载并继续。</p><p>默认使用 Fribbels 的真实遗器评分与强化潜力。缺失配装的部位使用库存补齐作参考。当前旧版刃/希儿的伤害实现仅覆盖简化普攻（100% ATK），不可视为完整角色输出；角色与光锥按 80 级、完整行迹、无队友、95 级有弱点且未击破敌人计算。决策阈值和步数成本仍为 Demo 假设。</p></details>
     <footer><span>HSR RELIC AGENT <span class="footer-star">✦</span> RUST COURSE PROJECT</span><span>非官方课堂 Demo · <a href="/credits.html">视觉资源与开源致谢 ↗</a></span></footer>
   </main>
-  <dialog id="reset-dialog"><div class="eyebrow">NEW OBSERVATION</div><h2>重新开始本次试用？</h2><p>当前标签页的强化记录与选择将清空，恢复最初的 12 件遗器和 8 步预算。</p><div class="dialog-actions"><button id="reset-no" class="outline-button">保留当前进度</button><button id="reset-yes" class="primary-button">确认重置</button></div></dialog>
+  <dialog id="reset-dialog"><div class="eyebrow">NEW OBSERVATION</div><h2>重新开始遗器观察？</h2><p>遗器强化记录与选择将清空，恢复最初的 12 件遗器和 8 步预算；Agent 对话与任务 Trace 会继续保留。</p><div class="dialog-actions"><button id="reset-no" class="outline-button">保留当前进度</button><button id="reset-yes" class="primary-button">确认重置</button></div></dialog>
   <dialog id="guide-dialog"><div class="eyebrow">QUICK START</div><h2>一轮强化，四个步骤</h2><ol class="guide"><li>选择刃或希儿，查看推荐。</li><li>点击遗器卡片，查看评分、潜力与副属性。全部库存里也可以手动选择候选。</li><li>录入这一次新增的副属性或属性增量，例如暴击率增加 3.24 个百分点。</li><li>查看 Continue / Hold / Stop 的原因，继续当前件，或观察新的推荐。</li></ol><p>想试试暂停流程？选择刃 → 全部库存 → 9100001，新增防御力% +5.4；之后再次选择它恢复观察，再录入防御力% +5.4。</p><p class="muted">这里录入的是模拟观察。已有四条词条时只能强化其中一条；只有三条时，需要新增第四条。</p><button id="guide-close" class="primary-button">开始观察</button></dialog>
   <dialog id="model-dialog" class="model-dialog"><div class="eyebrow">MODEL CONFIG / R3</div><h2>模型设置</h2><form id="model-form">
     <label>API Endpoint<input id="config-endpoint" type="url" required placeholder="https://api.openai.com/v1"></label>

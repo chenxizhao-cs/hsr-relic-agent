@@ -97,6 +97,76 @@ impl<E: Evaluator> DecisionEngine<E> {
         }
     }
 
+    pub fn restore(
+        account: AccountState,
+        evaluator: E,
+        goal: Option<CultivationGoal>,
+        selected_relic_id: Option<String>,
+    ) -> Result<Self> {
+        for (id, character) in &account.characters {
+            if id != &character.id {
+                return Err(Error("角色索引与角色 ID 不一致".into()));
+            }
+        }
+        for (id, relic) in &account.relics {
+            if id != &relic.id {
+                return Err(Error("遗器索引与遗器 ID 不一致".into()));
+            }
+            if relic.level > 15
+                || relic.level % 3 != 0
+                || !(3..=4).contains(&relic.substats.len())
+                || relic.substats.iter().any(|(stat, value)| {
+                    !stat.is_substat()
+                        || *stat == relic.main_stat
+                        || !value.is_finite()
+                        || *value <= 0.0
+                })
+            {
+                return Err(Error(format!("遗器 {id} 的等级或副属性数量无效")));
+            }
+            if let Some(character_id) = &relic.equipped_by
+                && !account.characters.contains_key(character_id)
+            {
+                return Err(Error(format!("遗器 {id} 装备于不存在的角色")));
+            }
+        }
+        for (character_id, relic_id) in account.decisions.keys() {
+            if !account.characters.contains_key(character_id)
+                || !account.relics.contains_key(relic_id)
+            {
+                return Err(Error("遗器决策引用了不存在的角色或遗器".into()));
+            }
+        }
+        for record in &account.history {
+            if !account.characters.contains_key(&record.goal.character_id)
+                || !account.relics.contains_key(&record.after.id)
+                || record.before.id != record.after.id
+                || record.result.relic_id != record.after.id
+            {
+                return Err(Error("强化历史引用了不存在或不一致的状态".into()));
+            }
+        }
+        if let Some(goal) = &goal
+            && !account.characters.contains_key(&goal.character_id)
+        {
+            return Err(Error("培养目标不在账号中".into()));
+        }
+        if let Some(relic_id) = &selected_relic_id {
+            if goal.is_none() {
+                return Err(Error("没有培养目标时不能恢复选中遗器".into()));
+            }
+            if !account.relics.contains_key(relic_id) {
+                return Err(Error("选中遗器不在账号中".into()));
+            }
+        }
+        Ok(Self {
+            account,
+            evaluator,
+            goal,
+            selected: selected_relic_id,
+        })
+    }
+
     pub fn account(&self) -> &AccountState {
         &self.account
     }

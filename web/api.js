@@ -38,4 +38,18 @@ export class DemoApi {
   modelConfig(config, revision) {
     return this.request('model-config', { ...config, expected_revision: revision })
   }
+  tasks() {
+    return this.request('tasks')
+  }
+  exportSession() {
+    return this.request('session/export')
+  }
+  importSession(session, revision) {
+    return this.request('session/import', { session, expected_revision: revision })
+  }
+  events(onTrace) {
+    const source = new EventSource(`/api/events?session=${encodeURIComponent(this.token)}`)
+    source.addEventListener('trace', (event) => onTrace(JSON.parse(event.data)))
+    return source
+  }
 }

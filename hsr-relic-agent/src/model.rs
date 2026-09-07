@@ -58,14 +58,14 @@ pub enum Slot {
     Rope,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LightCone {
     pub id: String,
     pub level: u8,
     pub superimposition: u8,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Character {
     pub id: String,
     pub name: String,
@@ -74,7 +74,7 @@ pub struct Character {
     pub light_cone: Option<LightCone>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Relic {
     pub id: String,
     pub slot: Slot,
@@ -88,12 +88,13 @@ pub struct Relic {
     pub discarded: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CultivationGoal {
     pub character_id: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UpgradeDecision {
     Continue,
     Hold,
@@ -102,7 +103,7 @@ pub enum UpgradeDecision {
 
 /// One observed +3 event. `increase` is an absolute stat delta, in percentage
 /// points for percentage stats. The caller supplies the old level to reject stale input.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpgradeResult {
     pub relic_id: String,
     pub expected_level: u8,
@@ -110,7 +111,7 @@ pub struct UpgradeResult {
     pub increase: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpgradeRecord {
     pub goal: CultivationGoal,
     pub before: Relic,
@@ -121,7 +122,7 @@ pub struct UpgradeRecord {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountState {
     pub characters: BTreeMap<String, Character>,
     pub relics: BTreeMap<String, Relic>,
@@ -129,7 +130,55 @@ pub struct AccountState {
     pub upgrade_steps: u32,
     pub history: Vec<UpgradeRecord>,
     /// Decisions are scoped to a target, so changing goals can reconsider a relic.
+    #[serde(with = "decision_map")]
     pub decisions: BTreeMap<(String, String), UpgradeDecision>,
+}
+
+mod decision_map {
+    use super::UpgradeDecision;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Entry {
+        character_id: String,
+        relic_id: String,
+        decision: UpgradeDecision,
+    }
+
+    pub fn serialize<S>(
+        value: &BTreeMap<(String, String), UpgradeDecision>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value
+            .iter()
+            .map(|((character_id, relic_id), decision)| Entry {
+                character_id: character_id.clone(),
+                relic_id: relic_id.clone(),
+                decision: *decision,
+            })
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<BTreeMap<(String, String), UpgradeDecision>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut result = BTreeMap::new();
+        for entry in Vec::<Entry>::deserialize(deserializer)? {
+            let key = (entry.character_id, entry.relic_id);
+            if result.insert(key, entry.decision).is_some() {
+                return Err(serde::de::Error::custom("duplicate decision entry"));
+            }
+        }
+        Ok(result)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

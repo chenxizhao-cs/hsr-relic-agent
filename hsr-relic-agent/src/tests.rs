@@ -242,6 +242,17 @@ fn switching_goal_reverses_candidate_order() {
 }
 
 #[test]
+fn account_state_round_trips_for_versioned_session_storage() {
+    let mut account = load_scanner_v4(DEMO_ACCOUNT, 8).unwrap();
+    account
+        .decisions
+        .insert(("1205".into(), "9100001".into()), UpgradeDecision::Hold);
+    let json = serde_json::to_string(&account).unwrap();
+    let restored: AccountState = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, account);
+}
+
+#[test]
 fn different_observations_on_same_starting_relic_produce_continue_or_hold() {
     let mut positive = engine(8);
     positive.select_relic("9100001").unwrap();

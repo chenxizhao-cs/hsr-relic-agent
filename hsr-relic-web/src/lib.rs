@@ -2,27 +2,33 @@ mod dto;
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    response::{
+        IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::{get, post},
 };
+use futures_util::{Stream, stream};
 use hsr_agent_runtime::{
-    AgentRuntime, ModelConfig, ModelConfigPatch, OpenAiCompatibleProvider, RuntimeError,
-    UsageLedger,
+    AgentRun, AgentRunContext, AgentRuntime, ChatMessage, ModelConfig, ModelConfigPatch,
+    ModelConfigView, OpenAiCompatibleProvider, RuntimeError, TraceEvent, UsageLedger,
 };
 use hsr_relic_agent::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
+    convert::Infallible,
     path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::broadcast;
 use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
 use uuid::Uuid;
 
@@ -78,6 +84,7 @@ struct SessionData {
     model_config: ModelConfig,
     usage: UsageLedger,
     last_agent: Option<hsr_agent_runtime::AgentRun>,
+    conversation: Vec<ChatMessage>,
 }
 struct Session {
     data: Mutex<SessionData>,
@@ -86,6 +93,9 @@ struct Session {
     running: AtomicBool,
     started: Mutex<Option<Instant>>,
     touched: Mutex<Instant>,
+    traces: Mutex<Vec<AgentRun>>,
+    active_trace: Mutex<Option<AgentRun>>,
+    events: broadcast::Sender<TraceEvent>,
 }
 #[derive(Clone)]
 pub struct App {
@@ -109,6 +119,9 @@ impl App {
             .get("x-demo-session")
             .and_then(|h| h.to_str().ok())
             .unwrap_or("");
+        self.session_by_token(token)
+    }
+    fn session_by_token(&self, token: &str) -> ApiResult<Arc<Session>> {
         let s = self
             .sessions
             .lock()
@@ -134,6 +147,10 @@ pub fn router(app: App, root: PathBuf) -> Router {
         .route("/api/action", post(action))
         .route("/api/model-config", post(update_model_config))
         .route("/api/agent", post(agent))
+        .route("/api/events", get(events))
+        .route("/api/tasks", get(tasks))
+        .route("/api/session/export", get(export_session))
+        .route("/api/session/import", post(import_session))
         .route("/api/progress", get(progress))
         .route("/api/cancel", post(cancel))
         .route("/api/health", get(|| async { Json(json!({"ok":true})) }))
@@ -142,7 +159,7 @@ pub fn router(app: App, root: PathBuf) -> Router {
             ServeDir::new(root.join("upstream/hsr-optimizer/public/assets")),
         )
         .fallback_service(ServeDir::new(root.join("web")))
-        .layer(DefaultBodyLimit::max(16384))
+        .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
@@ -200,6 +217,7 @@ async fn create_session(State(app): State<App>) -> ApiResult<Json<Value>> {
         ));
     }
     let cancelled = Arc::new(AtomicBool::new(false));
+    let (events, _) = broadcast::channel(256);
     let evaluator = if app.mock {
         WebEvaluator::Mock
     } else {
@@ -218,6 +236,7 @@ async fn create_session(State(app): State<App>) -> ApiResult<Json<Value>> {
         model_config: app.default_model_config.clone(),
         usage: UsageLedger::default(),
         last_agent: None,
+        conversation: vec![],
     };
     let snapshot = dto::snapshot(&data)?;
     let token = Uuid::new_v4().to_string();
@@ -230,6 +249,9 @@ async fn create_session(State(app): State<App>) -> ApiResult<Json<Value>> {
             running: AtomicBool::new(false),
             started: Mutex::new(None),
             touched: Mutex::new(Instant::now()),
+            traces: Mutex::new(vec![]),
+            active_trace: Mutex::new(None),
+            events,
         }),
     );
     Ok(Json(json!({"session":token,"state":snapshot})))
@@ -353,7 +375,6 @@ fn execute(s: &Session, command: Command) -> ApiResult<Value> {
             staged.engine =
                 Engine::new(load_scanner_v4(DEMO_ACCOUNT, 8)?, staged.evaluator.clone());
             staged.last_result = None;
-            staged.last_agent = None;
         }
     }
     staged.revision += 1;
@@ -464,34 +485,53 @@ fn execute_agent(session: &Session, command: AgentCommand) -> ApiResult<Value> {
     if data.revision != command.expected_revision {
         return Err(stale_revision());
     }
-    let before_calls = data.usage.summary().calls;
     let mut engine = data.engine.clone();
     let config = data.model_config.clone();
+    let mut conversation = std::mem::take(&mut data.conversation);
     let runtime = AgentRuntime::new(OpenAiCompatibleProvider::default());
-    let result = runtime.run(
+    let mut last_live_sequence = 0;
+    let mut on_update = |run: &AgentRun| {
+        *session.active_trace.lock().unwrap() = Some(run.clone());
+        if let Some(event) = run.events.last()
+            && event.sequence > last_live_sequence
+        {
+            last_live_sequence = event.sequence;
+            let _ = session.events.send(event.clone());
+        }
+    };
+    let result = runtime.run_with_context(
         &command.input,
         &config,
-        &mut data.usage,
-        &mut engine,
-        &session.cancelled,
+        AgentRunContext {
+            usage: &mut data.usage,
+            engine: &mut engine,
+            history: &mut conversation,
+            cancelled: &session.cancelled,
+            on_update: &mut on_update,
+        },
     );
-    match result {
+    data.conversation = conversation;
+    let (run, error) = match result {
         Ok(run) => {
             data.engine = engine;
-            data.last_agent = Some(run);
-            data.revision += 1;
+            (run, None)
         }
-        Err(error) => {
-            if data.usage.summary().calls != before_calls {
-                data.revision += 1;
+        Err(failure) => {
+            if matches!(failure.error, RuntimeError::Cancelled) {
+                data.engine = engine;
             }
-            let snapshot = dto::snapshot(&data)?;
-            *session.snapshot.lock().unwrap() = snapshot;
-            return Err(agent_error(error));
+            (*failure.run, Some(failure.error))
         }
-    }
+    };
+    data.last_agent = Some(run.clone());
+    session.traces.lock().unwrap().push(run);
+    *session.active_trace.lock().unwrap() = None;
+    data.revision += 1;
     let snapshot = dto::snapshot(&data)?;
     *session.snapshot.lock().unwrap() = snapshot.clone();
+    if let Some(error) = error {
+        return Err(agent_error(error));
+    }
     Ok(snapshot)
 }
 
@@ -504,19 +544,263 @@ fn stale_revision() -> ApiError {
 }
 
 fn agent_error(error: RuntimeError) -> ApiError {
-    let (status, code) = match error {
-        RuntimeError::InvalidInput(_) => (StatusCode::BAD_REQUEST, "invalid_agent_input"),
-        RuntimeError::ModelNotConfigured => {
-            (StatusCode::UNPROCESSABLE_ENTITY, "model_not_configured")
-        }
-        RuntimeError::BudgetReached { .. } => (StatusCode::CONFLICT, "token_budget_reached"),
-        RuntimeError::Cancelled => (StatusCode::CONFLICT, "cancelled"),
-        RuntimeError::Provider(_) => (StatusCode::BAD_GATEWAY, "model_provider_failed"),
-        RuntimeError::ToolLoopLimit => (StatusCode::UNPROCESSABLE_ENTITY, "tool_loop_limit"),
-        RuntimeError::MissingToolCall => (StatusCode::UNPROCESSABLE_ENTITY, "tool_call_required"),
-        RuntimeError::MissingReply => (StatusCode::UNPROCESSABLE_ENTITY, "model_reply_missing"),
+    let status = match &error {
+        RuntimeError::InvalidInput(_) | RuntimeError::InvalidHistory(_) => StatusCode::BAD_REQUEST,
+        RuntimeError::ModelNotConfigured => StatusCode::UNPROCESSABLE_ENTITY,
+        RuntimeError::BudgetReached { .. } | RuntimeError::Cancelled => StatusCode::CONFLICT,
+        RuntimeError::Provider(_) => StatusCode::BAD_GATEWAY,
+        RuntimeError::ToolLoopLimit
+        | RuntimeError::MissingToolCall
+        | RuntimeError::MissingReply => StatusCode::UNPROCESSABLE_ENTITY,
     };
-    ApiError::new(status, code, error.to_string())
+    ApiError::new(status, error.code(), error.to_string())
+}
+
+#[derive(Deserialize)]
+struct EventQuery {
+    session: String,
+}
+
+async fn events(
+    State(app): State<App>,
+    Query(query): Query<EventQuery>,
+) -> ApiResult<Sse<impl Stream<Item = std::result::Result<Event, Infallible>>>> {
+    let session = app.session_by_token(&query.session)?;
+    let stream = stream::unfold(session.events.subscribe(), |mut receiver| async move {
+        loop {
+            match receiver.recv().await {
+                Ok(event) => {
+                    let data = serde_json::to_string(&event).ok()?;
+                    let message = Event::default()
+                        .event("trace")
+                        .id(format!("{}:{}", event.run_id, event.sequence))
+                        .data(data);
+                    return Some((Ok(message), receiver));
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(10))
+            .text("keep-alive"),
+    ))
+}
+
+async fn tasks(State(app): State<App>, headers: HeaderMap) -> ApiResult<Json<Value>> {
+    let session = app.session(&headers)?;
+    let active = session.active_trace.lock().unwrap().clone();
+    let runs = session.traces.lock().unwrap().clone();
+    Ok(Json(json!({"active":active,"tasks":runs})))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SavedEngine {
+    account: AccountState,
+    goal: Option<CultivationGoal>,
+    selected_relic_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SavedSession {
+    schema_version: u32,
+    saved_at_unix_ms: u64,
+    evaluator: String,
+    source_revision: u64,
+    engine: SavedEngine,
+    last_result: Option<Value>,
+    model_config: ModelConfigView,
+    usage: UsageLedger,
+    conversation: Vec<ChatMessage>,
+    tasks: Vec<AgentRun>,
+}
+
+async fn export_session(State(app): State<App>, headers: HeaderMap) -> ApiResult<Json<Value>> {
+    let session = app.session(&headers)?;
+    if session.running.load(Ordering::SeqCst) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "busy",
+            "任务运行中，请完成或取消后再保存会话。",
+        ));
+    }
+    let data = session.data.lock().unwrap();
+    let saved = SavedSession {
+        schema_version: 1,
+        saved_at_unix_ms: now_ms(),
+        evaluator: data.evaluator.name().into(),
+        source_revision: data.revision,
+        engine: SavedEngine {
+            account: data.engine.account().clone(),
+            goal: data.engine.goal().cloned(),
+            selected_relic_id: data.engine.selected().map(|relic| relic.id.clone()),
+        },
+        last_result: data.last_result.clone(),
+        model_config: data.model_config.view(),
+        usage: data.usage.clone(),
+        conversation: data.conversation.clone(),
+        tasks: session.traces.lock().unwrap().clone(),
+    };
+    Ok(Json(serde_json::to_value(saved).map_err(|error| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "session_export_failed",
+            error.to_string(),
+        )
+    })?))
+}
+
+#[derive(Deserialize)]
+struct ImportCommand {
+    expected_revision: u64,
+    session: SavedSession,
+}
+
+async fn import_session(
+    State(app): State<App>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<ImportCommand>, axum::extract::rejection::JsonRejection>,
+) -> ApiResult<Json<Value>> {
+    let command = payload
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_session_file",
+                format!("会话 JSON 格式不正确或超过 4 MiB：{}", error.body_text()),
+            )
+        })?
+        .0;
+    let session = app.session(&headers)?;
+    if session.running.load(Ordering::SeqCst) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "busy",
+            "任务运行中，请完成或取消后再加载会话。",
+        ));
+    }
+    if command.session.schema_version != 1 {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_session_version",
+            "只支持 schema_version 1 的会话文件。",
+        ));
+    }
+    let mut data = session.data.lock().unwrap();
+    if data.revision != command.expected_revision {
+        return Err(stale_revision());
+    }
+    if command.session.evaluator != data.evaluator.name() {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "evaluator_mismatch",
+            format!(
+                "会话使用 {}，当前服务是 {}；请用相同模式启动后加载。",
+                command.session.evaluator,
+                data.evaluator.name()
+            ),
+        ));
+    }
+    command.session.usage.validate().map_err(|message| {
+        ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_usage_history",
+            message,
+        )
+    })?;
+    validate_history(&command.session.conversation, &command.session.tasks)?;
+    let mut model_config = data.model_config.clone();
+    let view = command.session.model_config;
+    model_config
+        .apply(ModelConfigPatch {
+            endpoint: view.endpoint,
+            api_key: None,
+            clear_api_key: false,
+            model: view.model,
+            context_length: view.context_length,
+            reasoning_mode: view.reasoning_mode,
+            input_price_per_million: view.input_price_per_million,
+            output_price_per_million: view.output_price_per_million,
+            token_budget: view.token_budget,
+        })
+        .map_err(|message| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_model_config",
+                message,
+            )
+        })?;
+    let saved_engine = command.session.engine;
+    let engine = DecisionEngine::restore(
+        saved_engine.account,
+        data.evaluator.clone(),
+        saved_engine.goal,
+        saved_engine.selected_relic_id,
+    )?;
+    let runs = command.session.tasks;
+    let mut staged = SessionData {
+        engine,
+        evaluator: data.evaluator.clone(),
+        revision: data.revision + 1,
+        last_result: command.session.last_result,
+        model_config,
+        usage: command.session.usage,
+        last_agent: runs.last().cloned(),
+        conversation: command.session.conversation,
+    };
+    let snapshot = dto::snapshot(&staged)?;
+    staged.revision = data.revision + 1;
+    *data = staged;
+    *session.traces.lock().unwrap() = runs;
+    *session.active_trace.lock().unwrap() = None;
+    *session.snapshot.lock().unwrap() = snapshot.clone();
+    Ok(Json(snapshot))
+}
+
+fn validate_history(messages: &[ChatMessage], runs: &[AgentRun]) -> ApiResult<()> {
+    if messages.len() > 10_000 || runs.len() > 1_000 {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "session_history_too_large",
+            "会话历史条目过多。",
+        ));
+    }
+    if !messages.is_empty() && !matches!(messages.first(), Some(ChatMessage::System { .. })) {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_agent_history",
+            "Agent 上下文缺少 system message。",
+        ));
+    }
+    for run in runs {
+        if run.id.is_empty() || run.events.len() > 10_000 {
+            return Err(ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_agent_trace",
+                "Agent Trace 包含无效任务。",
+            ));
+        }
+        for (index, event) in run.events.iter().enumerate() {
+            if event.run_id != run.id || event.sequence != index as u64 + 1 {
+                return Err(ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_agent_trace",
+                    "Agent Trace 的任务 ID 或事件序号无效。",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 async fn progress(State(app): State<App>, headers: HeaderMap) -> ApiResult<Json<Value>> {

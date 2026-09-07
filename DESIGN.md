@@ -142,7 +142,7 @@ v0.1 没有真实 LLM、Fribbels 调用、真实资源成本或完整 Build 计�
 
 卡片与页面独立实现；构建时调用上游 `src/lib/rendering/assets.ts` 的 Assets 方法，读取当前 fixture 所需资源映射。前端通过独立 AssetProvider 访问本地图片，不依赖 Fribbels React 组件或 store。上游固定版本、来源文件和图片权利说明见 [Web 文档](web/README.md) 与 [资源致谢](web/credits.html)。未修改第三方源码。
 
-课堂试用暂用内存会话、固定 8 步预算与当前 fixture，没有公网部署、认证或数据库；服务器重启会丢失历史。Web 中的简化普攻口径与 v0.2 一致，不代表完整角色输出。
+课堂试用暂用内存会话、固定 8 步预算与当前 fixture，没有公网部署、认证或数据库；服务器重启前需由用户显式保存 Session JSON，之后才能加载恢复。Web 中的简化普攻口径与 v0.2 一致，不代表完整角色输出。
 
 ## 8. 后续版本规划
 
@@ -172,16 +172,25 @@ Existing DecisionEngine → Evaluator → Fribbels Adapter
 - Tool 层提供设置目标、查询状态、候选排序、下一件推荐和强化历史；其职责只是参数转换和结构化返回。
 - Agent 在 `DecisionEngine` 副本上执行，完整成功后才提交。模型或工具链错误不会留下半完成的账号状态；已经收到的真实 usage 仍然记账。
 - `ModelConfig` 支持 Endpoint、API Key、Model、Context Length、Reasoning Mode、输入/输出价格和 Token Budget，可由环境变量初始化，也可在 Web 会话内修改。
-- Provider 当前适配 OpenAI-compatible Chat Completions function tools。Context Length 在无历史的 v0.3 中作为请求的 `max_completion_tokens` 上限；真正的历史截断策略留给 R5。
+- Provider 当前适配 OpenAI-compatible Chat Completions function tools。Context Length 作为请求的 `max_completion_tokens` 上限；多轮完整历史会继续传入，未来仍需补充按不同模型窗口裁剪或摘要的请求策略。
 - `UsageLedger` 逐次记录响应 ID、模型、input/output/total tokens、时间和按配置价格计算的费用。累计 tokens 达到 budget 后，在下一次模型请求发出前终止；已经完成的确定性工具结果仍可返回。
 - Web 展示自然语言输入、最终回复、可展开的 Agent → Tool 事件、模型设置以及累计 usage/cost/budget。模型配置和遗器账号状态属于同一个内存会话。
 
-当前 `AgentEvent` 已表达开始、模型请求、usage、Tool 请求/完成、回复和预算阻断，可作为 R4/R5 的公共事件语义；本轮仍一次性返回 JSON，不是 SSE/WebSocket。`AgentRun` 保留本轮输入、回复和事件，但只保存最近一轮且不落盘。
+`AgentEvent` 表达用户输入、模型请求/响应、usage、Tool 请求/进度/结果、Rust 决策、回复、错误、取消和结束状态。Runtime 每产生一个事件就同时追加到本轮 `AgentRun` 并通知 Web；实时显示和历史记录不会形成两套语义。
 
-### R4 / R5 后续
+### R4 / R5：实时 Trace 与上下文历史（已实现）
 
-- R4：将 `AgentEvent` 改为实时事件通道，并使取消句柄能够中止正在等待的 HTTP 模型请求；现有轮询进度和请求边界取消不视为 R4 完整完成。
-- R5：持久化完整多轮 messages、每轮 `AgentRun`、Tool 输入输出与 `UsageLedger`，支持列出、保存和加载会话；当前仅内存保存遗器历史与最近一次 Agent 轨迹，不视为 R5 完整完成。
+- Web 通过 SSE 订阅同一份 `TraceEvent`；事件带 run ID、会话内序号和时间戳。无法计算真实完成比例时只展示当前阶段、Tool 名和真实等待秒数。
+- 取消标志由 Web 传入 Agent Runtime 和 Evaluator。OpenAI-compatible Provider 在等待响应时丢弃并终止 HTTP future；Fribbels 沿现有检查终止 Node 子进程。取消前完成的事件、usage 和 Tool 产生的状态仍会提交和保存。
+- 每个 Web 会话保留完整的 Chat messages 和全部 `AgentRun`，所以后续请求会带上此前模型、Tool 和用户上下文，而不是每轮重新开始。
+- Session JSON `schema_version = 1` 保存内部 `AccountState`、目标与选择、强化历史、完整模型上下文、任务 Trace、UsageLedger、价格/预算配置和最近决策展示状态；加载后重建 `DecisionEngine` 并可继续运行。
+- API Key 不进入 Session JSON；加载时保留当前服务端会话已有 Key。会话文件必须在相同 Evaluator 模式下加载，避免把 Mock 与 Fribbels 结果混合。
+- HTTP/SSE 与 Session 容器仍位于 Web 层，`DecisionEngine` 只增加可校验的状态恢复入口，不依赖网络或前端事件。
+
+R4/R5 当前是课堂 Demo 实现：进程内最多保留 64 个会话，持久化由用户显式下载/加载 JSON 完成；没有数据库、登录、多设备同步或生产级断线事件补发。
+
+### 后续
+
 - 课程硬性要求继续按 [AGENTS.md](AGENTS.md) 执行，业务范围收缩不取消这些要求。
 
 ### 按需考虑，暂不排期
@@ -206,6 +215,6 @@ Existing DecisionEngine → Evaluator → Fribbels Adapter
 1. 如何明确角色技能版本、补全实际配装与行迹，使 Build 伤害指标更有代表性。
 2. 如何用对照数据校准真实评分、Build 改善与成本在排序和决策中的作用。
 3. 接入真实账号后，为可靠更新状态还需哪些输入与校验。
-4. R5 多轮上下文采用何种持久化格式，以及不同模型的上下文窗口如何映射到统一裁剪策略。
+4. 多轮历史增长后，如何在保留完整存档的同时按不同模型上下文窗口生成安全的请求视图。
 
-自有 JSON v1、结构化评价结果及外部失败回滚已在 v0.2 实现；v0.3 在其上增加独立 Provider、Tool、Agent Event 与 usage ledger，后续继续以现有单目标闭环为基础迭代。
+自有评价 JSON v1、结构化结果及外部失败回滚已在 v0.2 实现；v0.3 在其上增加独立 Provider、Tool 与 usage ledger，当前 R4/R5 再将 Agent Event 用作实时 Trace 和版本化会话历史。后续继续以现有单目标闭环为基础迭代。

@@ -1,6 +1,6 @@
 # Web Demo：遗器培养终端
 
-独立单页，沿用 v0.2 的 fixture、Evaluator 与决策规则，并在 v0.3 增加 Minimal Agent Runtime。原生 HTML/CSS/ES Modules + Rust Axum；不需要前端开发服务器，浏览器运行时不加载 Fribbels 应用。
+独立单页，沿用 v0.2 的 fixture、Evaluator 与决策规则，在 v0.3 Agent Runtime 上增加 R4 实时 Trace/取消和 R5 多轮历史/Session JSON。原生 HTML/CSS/ES Modules + Rust Axum；不需要前端开发服务器，浏览器运行时不加载 Fribbels 应用。
 
 ## 启动与试用
 
@@ -33,6 +33,12 @@ cargo run --manifest-path hsr-relic-web/Cargo.toml -- --lan
 
 当前 Provider 使用 Chat Completions function tools。支持无 Key 的本地 OpenAI-compatible 服务；不是所有服务都接受 `reasoning_effort` 或 `max_completion_tokens`，不兼容时将 Reasoning Mode 设为 Disabled，并按服务能力配置 Context Length。
 
+### 实时 Trace、取消与会话文件
+
+浏览器启动后建立同源 SSE 连接。Agent 运行时会逐项显示用户消息、模型请求/响应、Tool 名与参数、当前执行阶段、Tool 结果、Rust 决策、真实 usage 和最终状态，并继续显示真实等待秒数。点击“取消本次计算”会设置服务端取消标志：模型请求的 HTTP future 会中止，Fribbels Adapter 子进程会被终止；已完成事件、usage 和 Tool 状态保留在任务历史。
+
+“保存 JSON”导出 `schema_version: 1` 的完整会话；“加载 JSON”恢复账号状态、多轮模型 messages、所有 Agent 任务 Trace、usage/费用和模型公开配置。文件不包含 API Key，加载后沿用当前服务端会话已有的 Key。Mock 文件只能加载到 Mock 服务，Fribbels 文件只能加载到 Fribbels 服务。
+
 ### 可复现观察
 
 1. 选择刃；也可切换希儿比较排序。
@@ -51,7 +57,7 @@ cargo run --manifest-path hsr-relic-web/Cargo.toml -- --lan
 | `api.js` | 同源 JSON 请求、会话令牌、错误传递 |
 | `asset-provider.js` | 界面唯一图片入口；只读生成的资源映射 |
 | `asset-manifest.ts` / `prepare.mjs` | 构建时调用真正的上游 Assets，生成 `.generated/assets.json`，不手工维护图片 URL |
-| `../hsr-relic-web/src/lib.rs` | 薄 API、会话内存、动作串行化、版本校验、进度与取消、成功后提交快照 |
+| `../hsr-relic-web/src/lib.rs` | 薄 API、会话内存、SSE、版本化保存/加载、动作串行化与取消 |
 | `../hsr-relic-web/src/dto.rs` | 内部模型到 Web 展示 DTO；结构化错误到中文提示 |
 | `../hsr-agent-runtime/` | ModelConfig、OpenAI-compatible Provider、Agent Runtime、薄 Tool Layer、AgentEvent 与 UsageLedger |
 | `../hsr-relic-agent/` | CLI 共用的原有 core；评分、排序、状态更新和三态判断仍全部在这里 |
@@ -65,6 +71,10 @@ cargo run --manifest-path hsr-relic-web/Cargo.toml -- --lan
 - `POST /api/action`：`target / select / recommend / upgrade / reset`；必须提供 `expected_revision`。强化另传 `relic_id / expected_level / stat / increase`。
 - `POST /api/model-config`：更新当前会话的模型配置；必须提供 `expected_revision`。Key 留空保留、`clear_api_key: true` 清除。
 - `POST /api/agent`：提交自然语言目标并运行模型 → Tool → Decision Engine 闭环；必须提供 `expected_revision / input`。
+- `GET /api/events?session=...`：SSE 实时 `TraceEvent`；每个事件含 run ID、序号和时间。
+- `GET /api/tasks`：列出当前任务和全部历史 `AgentRun`。
+- `GET /api/session/export`：导出版本化完整 Session JSON。
+- `POST /api/session/import`：提供 `expected_revision / session`，校验后恢复会话。
 - `GET /api/progress`、`POST /api/cancel`：查看进行中状态与取消当前操作。
 - 后续请求携带 `x-demo-session`。失败返回 `{error: {code, message}}`；不会靠解析 CLI 文本工作。
 
@@ -113,10 +123,8 @@ cargo test --offline --manifest-path hsr-relic-web/Cargo.toml --test agent_e2e -
 
 Web 测试覆盖三种判断、同件状态与历史更新、Hold 恢复、Stop 换件、不同目标排序、错误回滚、重复提交拒绝、会话隔离、重置、忙碌状态与取消前不提交。默认测试用 Mock 隔离 HTTP 行为；真实计算由 core 集成测试和启动后的浏览器流程验证。
 
-当前验证：core/CLI/Fribbels 37 项、Agent Runtime 9 项、Web 5 项常规测试和 1 项显式运行的 Agent → 真实 Fribbels 端到端测试通过；三者 clippy 均无警告。浏览器已验证 Agent 设置目标、获取下一件推荐、展示逐次 usage/cost/Tool 轨迹，以及 budget 达线后不再请求。没有可用 API Key 或本地模型时，外部真实模型调用需要由使用者按上述方式配置后验证。
+测试覆盖 core 状态 JSON 往返、多轮上下文、统一事件回调、可保存的取消任务、模型 HTTP 等待取消、Session JSON 账号状态恢复和密钥排除。显式 Agent 端到端测试还验证脚本模型 → Tools → 真实 Fribbels → 保存/加载 Trace、usage 和预算阻断。
 
-Demo 简化：每次固定加载当前 fixture、8 步强化预算；没有账号上传或数据库。会话保留在服务内存，浏览器 sessionStorage 保存会话令牌，刷新可继续；复制标签页可能继承浏览器的 sessionStorage，独立打开地址才创建独立会话。重启服务会丢失模型配置、usage、Agent 轨迹和账号状态；最多 64 会话，新建时清理闲置超过两小时的会话。当前只保存最近一次 Agent 轨迹，不保留多轮 messages，不做 R5 持久化。
-
-现有 `/api/progress` 和 cancel flag 只在请求边界检查；等待阻塞 HTTP 响应时不能立即中止 socket，也没有 SSE/WebSocket 实时事件。因此它们只是 R4 的接口基础，不算 R4 完整实现。`AgentEvent` 已统一模型请求、usage、Tool 和回复事件，下一轮可改为流式发送。
+Demo 简化：每次固定加载当前 fixture、8 步强化预算；没有账号上传或数据库。会话首先保留在服务内存，浏览器 sessionStorage 保存会话令牌，刷新可继续；重启前需要手动保存 JSON，重启后再加载。最多 64 个内存会话，新建时清理闲置超过两小时的会话。没有登录、多设备同步、数据库自动持久化或生产级 SSE 断线补发；断线后仍可通过任务历史读取已经保存的完整 Trace。
 
 评价边界保持 v0.2：真实评分、平均满级潜力和参考 Build 面板；旧版 Blade / Seele 的简化普攻不是完整技能输出或 DPS。缺失四个部位按库存补齐只是参考假设；升级成本、阈值仍为 Demo 启发式。

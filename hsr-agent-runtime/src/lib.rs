@@ -11,6 +11,9 @@ pub use provider::{
     ChatMessage, ModelProvider, ModelResponse, ModelToolCall, OpenAiCompatibleProvider,
     ProviderError, ProviderRequest, ToolDefinition,
 };
-pub use runtime::{AgentEvent, AgentRun, AgentRunStatus, AgentRuntime, RuntimeError};
+pub use runtime::{
+    AgentEvent, AgentRun, AgentRunContext, AgentRunFailure, AgentRunStatus, AgentRuntime,
+    RuntimeError, ToolProgressStage, TraceEvent,
+};
 pub use tools::{CoreTools, TOOL_NAMES, tool_definitions};
 pub use usage::{TokenUsage, UsageLedger, UsageRecord, UsageSummary};

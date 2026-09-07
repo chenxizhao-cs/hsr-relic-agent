@@ -17,9 +17,9 @@ LLM 不获得重新实现评分或排序的职责。系统提示要求它先调�
 | 文件 | 职责 |
 |---|---|
 | `src/config.rs` | `ModelConfig`、安全的公开视图、环境变量和 Web patch 校验 |
-| `src/provider.rs` | `ModelProvider` 抽象及 OpenAI-compatible Chat Completions 实现 |
+| `src/provider.rs` | `ModelProvider` 抽象及可取消的 OpenAI-compatible Chat Completions 实现 |
 | `src/tools.rs` | 五个 Agent Tool 对现有 Rust core 的薄封装 |
-| `src/runtime.rs` | 最多六轮的 tool loop、事务式 core 提交、取消/预算边界和 `AgentEvent` |
+| `src/runtime.rs` | 最多六轮的 tool loop、多轮上下文、取消/预算边界和统一 `TraceEvent` |
 | `src/usage.rs` | API 响应 usage 的逐次 ledger、累计与费用计算 |
 
 ## 模型配置
@@ -29,12 +29,12 @@ LLM 不获得重新实现评分或排序的职责。系统提示要求它先调�
 - API Endpoint；base URL 或完整 `/chat/completions` 地址；
 - API Key；可以为空以调用无鉴权本地服务；
 - Model；
-- Context Length；v0.3 无持久历史，当前映射为请求 `max_completion_tokens`，后续 R5 再用于上下文裁剪；
+- Context Length；当前映射为请求 `max_completion_tokens`。完整多轮历史会保存并传给模型，但尚未实现自动摘要或按窗口裁剪；
 - Reasoning Mode：disabled / minimal / low / medium / high；disabled 不发送该字段；
 - Input / Output Token Price，均按 1M tokens；
 - Token Budget，以 input + output 累计 tokens 计。
 
-新 Web 会话从同名 `HSR_LLM_*` 环境变量初始化；之后可以通过 Web 设置独立修改。Key 在内部使用不可序列化的私密字段，`Debug` 只打印 `[REDACTED]`，公开视图只返回是否已配置。当前配置不落盘。
+新 Web 会话从同名 `HSR_LLM_*` 环境变量初始化；之后可以通过 Web 设置独立修改。Key 在内部使用不可序列化的私密字段，`Debug` 只打印 `[REDACTED]`，公开视图只返回是否已配置。Session JSON 保存公开配置但不保存 Key。
 
 Context Length 不是对远端模型真实上下文窗口的修改；服务端模型仍有自己的硬限制。不同供应商对 `max_completion_tokens` 与 `reasoning_effort` 的支持也可能不同。
 
@@ -48,7 +48,7 @@ Context Length 不是对远端模型真实上下文窗口的修改；服务端�
 | `get_next_relic_recommendation` | 无 | 由 Rust 推荐并选中下一件遗器 |
 | `get_upgrade_history` | 无 | 已接受的强化观察及 Continue / Hold / Stop |
 
-`CoreTools` 不包含评分阈值、候选排序或三态决策算法。一次 Agent run 在 `DecisionEngine` 副本上工作，最终回复成功后才提交；预算恰在 Tool 后用尽时，已完成的确定性 Tool 状态和结果可以提交并返回，且不再请求模型。
+`CoreTools` 不包含评分阈值、候选排序或三态决策算法。一次 Agent run 在 `DecisionEngine` 副本上工作；正常完成和预算在 Tool 后达到时提交。用户取消时，取消前已经完成的 Tool 状态也会保留；正在执行但未完成的 core 操作仍由原有事务边界回滚。
 
 ## Usage、费用和预算
 
@@ -70,11 +70,11 @@ cargo clippy --offline --manifest-path hsr-agent-runtime/Cargo.toml --all-target
 
 测试覆盖配置密钥不泄露、协议请求与真实 usage 解析、费用、五个 Tool、完整 tool loop、事务提交和请求前预算阻断。Provider 的本地 HTTP 测试需要操作系统允许绑定回环端口。
 
-## 明确保留给 R4 / R5
+## R4 / R5 公共结构
 
-- `AgentEvent` 已统一开始、模型请求、usage、Tool 请求/结果、回复和预算阻断事件；v0.3 仍在请求完成后一次性返回。
-- `AgentRun` 可以成为会话轨迹记录，但 v0.3 只在 Web 内存会话保存最近一次。
-- `UsageLedger` 是可持久化历史的结构基础，目前不序列化到磁盘。
-- `AtomicBool` 提供请求边界取消检查，目前不能中止正在等待的同步 HTTP socket。
+- `TraceEvent` 带 run ID、事件序号和 Unix 毫秒时间；`AgentEvent` 统一模型、Tool、决策、usage、回复、错误和取消语义。
+- `run_with_context` 同时接收历史 `ChatMessage` 和事件回调。每次事件只生成一次：Web SSE 实时发送它，任务结束后同一个 `AgentRun` 被保存。
+- Provider 使用可取消的异步 HTTP future；Runtime 轮次与 Tool 边界检查同一取消标志，Fribbels Evaluator 继续使用该标志终止 Adapter 子进程。
+- `ChatMessage`、`AgentRun`、`TraceEvent` 和 `UsageLedger` 均可序列化/反序列化，供 Web 的版本化 Session JSON 保存完整上下文。
 
-因此 v0.3 完成 R3/R6 的最小闭环，但不宣称已经完整完成 R4/R5。
+持久化文件和 SSE 协议由 Web 层负责，Runtime 不依赖 Axum、浏览器或具体存储位置。

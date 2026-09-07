@@ -226,3 +226,60 @@ async fn model_config_is_server_side_and_secret_is_never_returned() {
     let (_, reread) = request(&app, "GET", "/api/state", &token, Value::Null).await;
     assert!(!reread.to_string().contains("super-secret-value"));
 }
+
+#[tokio::test]
+async fn versioned_session_json_restores_business_state_without_api_key() {
+    let app = app();
+    let (source, mut state) = session(&app).await;
+    act(
+        &app,
+        &source,
+        &mut state,
+        json!({"action":"target","character_id":"1205"}),
+    )
+    .await;
+    act(
+        &app,
+        &source,
+        &mut state,
+        json!({"action":"select","relic_id":"9100002"}),
+    )
+    .await;
+    act(&app, &source, &mut state, json!({"action":"upgrade","relic_id":"9100002","expected_level":3,"stat":"crit_rate","increase":3.24})).await;
+    let (status, _) = request(
+        &app,
+        "POST",
+        "/api/model-config",
+        &source,
+        json!({"expected_revision":state["revision"],"endpoint":"http://localhost:1234/v1",
+            "api_key":"must-not-be-exported","clear_api_key":false,"model":"saved-model",
+            "context_length":4096,"reasoning_mode":"disabled","input_price_per_million":1.0,
+            "output_price_per_million":2.0,"token_budget":5000}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, saved) = request(&app, "GET", "/api/session/export", &source, Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["schema_version"], 1);
+    assert_eq!(saved["engine"]["account"]["relics"]["9100002"]["level"], 6);
+    assert_eq!(saved["engine"]["goal"]["character_id"], "1205");
+    assert_eq!(saved["model_config"]["model"], "saved-model");
+    assert!(!saved.to_string().contains("must-not-be-exported"));
+
+    let (target, target_state) = session(&app).await;
+    let (status, restored) = request(
+        &app,
+        "POST",
+        "/api/session/import",
+        &target,
+        json!({"expected_revision":target_state["revision"],"session":saved}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert_eq!(restored["target_id"], "1205");
+    assert_eq!(restored["selected_id"], "9100002");
+    assert_eq!(relic(&restored, "9100002")["level"], 6);
+    assert_eq!(restored["history"].as_array().unwrap().len(), 1);
+    assert_eq!(restored["model_config"]["model"], "saved-model");
+    assert_eq!(restored["model_config"]["api_key_configured"], false);
+}

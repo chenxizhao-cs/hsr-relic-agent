@@ -37,6 +37,7 @@ const percent = (stat) => !['hp', 'atk', 'def', 'speed'].includes(stat)
 const value = (stat, n) => `${number(n)}${percent(stat) ? '%' : ''}`
 const api = new DemoApi()
 let state, assets, tab = 'ranked', busy = false, timer, progressLabel = '正在处理'
+let taskState = { active: null, tasks: [] }, liveRun = null, selectedTaskId = null, eventSource
 
 function img(src, cls = '', alt = '') {
   return `<img src="${esc(src)}" class="${cls}" alt="${esc(alt)}" loading="lazy">`
@@ -53,6 +54,8 @@ function render() {
   $('evaluator-label').textContent = state.evaluator === 'Mock' ? '◇ Mock 对照模式' : '✦ Fribbels 评价'
   $('reset').disabled = busy
   $('model-settings').disabled = busy
+  $('save-session').disabled = busy
+  $('load-session').disabled = busy
   $('characters').innerHTML = state.characters.map((c) =>
     `<button class="character-choice ${c.id === state.target_id ? 'selected' : ''}" data-target="${c.id}" ${busy ? 'disabled' : ''} aria-pressed="${
       c.id === state.target_id
@@ -80,6 +83,7 @@ function render() {
   renderResult()
   renderHistory()
   renderAgent()
+  renderTaskHistory()
 }
 
 function renderAgent() {
@@ -95,24 +99,88 @@ function renderAgent() {
   $('usage-budget-label').textContent = `${number(usage.total_tokens)} / ${number(config.token_budget)}`
   $('agent-input').disabled = busy
   $('agent-submit').disabled = busy
-  const run = state.last_agent
+  const run = liveRun ?? state.last_agent
   if (!run) {
     $('agent-reply').innerHTML = '<span class="agent-mark">✦</span><div><strong>用自然语言告诉我目标</strong><p>例如：我想培养 Blade，材料比较紧，帮我看看下一件最值得强化什么。</p></div>'
     $('agent-trace').hidden = true
     return
   }
-  $('agent-reply').innerHTML = `<span class="agent-mark">✦</span><div><strong>Agent 回复 <small>${run.status === 'budget_reached' ? '预算已达' : '完成'}</small></strong><p>${esc(run.reply)}</p></div>`
-  $('agent-events').innerHTML = run.events.map((event) => {
-    if (event.type === 'run_started') return `<div><b>开始</b><span>${esc(event.user_input)}</span></div>`
-    if (event.type === 'model_request_started') return `<div><b>模型</b><span>发起第 ${event.call_index} 次请求</span></div>`
-    if (event.type === 'usage_recorded') return `<div><b>Usage</b><span>输入 ${number(event.call.input_tokens)} · 输出 ${number(event.call.output_tokens)} · 本次费用 ${Number(event.call.cost).toFixed(6)}</span></div>`
-    if (event.type === 'tool_requested') return `<div><b>Tool</b><span>${esc(event.name)}</span><code>${esc(JSON.stringify(event.arguments))}</code></div>`
-    if (event.type === 'tool_finished') return `<div><b>结果</b><span>${esc(event.name)}</span><details><summary>结构化输出</summary><pre>${esc(JSON.stringify(event.result, null, 2))}</pre></details></div>`
-    if (event.type === 'budget_blocked') return `<div><b>预算</b><span>达到 ${number(event.used_tokens)} / ${number(event.token_budget)}，停止新请求</span></div>`
-    if (event.type === 'assistant_reply') return '<div><b>回复</b><span>模型基于工具结果完成解释</span></div>'
-    return ''
-  }).join('')
+  const status = statusLabel(run.status)
+  const content = run.reply ?? run.error ?? (run.status === 'running' ? '任务正在执行，下面会实时追加事件。' : '本轮没有最终回复。')
+  $('agent-reply').innerHTML = `<span class="agent-mark">✦</span><div><strong>Agent ${run.status === 'running' ? '运行中' : '回复'} <small>${status}</small></strong><p>${esc(content)}</p></div>`
+  $('agent-events').innerHTML = run.events.map(eventHtml).join('')
   $('agent-trace').hidden = false
+}
+
+function statusLabel(status) {
+  return { running: '进行中', completed: '完成', budget_reached: '预算已达', failed: '失败', cancelled: '已取消' }[status] ?? status
+}
+
+function eventHtml(event) {
+  if (event.type === 'run_started') return `<div><b>用户</b><span>${esc(event.user_input)}</span></div>`
+  if (event.type === 'model_request_started') return `<div><b>模型</b><span>第 ${event.call_index} 次请求 · ${esc(event.model)}</span></div>`
+  if (event.type === 'model_response_received') return `<div><b>响应</b><span>${esc(event.response_id)} · ${event.tool_call_count} 个 Tool Call${event.has_text ? ' · 含文本' : ''}</span></div>`
+  if (event.type === 'usage_recorded') return `<div><b>Usage</b><span>输入 ${number(event.call.input_tokens)} · 输出 ${number(event.call.output_tokens)} · 本次费用 ${Number(event.call.cost).toFixed(6)}</span></div>`
+  if (event.type === 'tool_requested') return `<div><b>Tool</b><span>${esc(event.name)}</span><code>${esc(JSON.stringify(event.arguments))}</code></div>`
+  if (event.type === 'tool_progress') return `<div><b>进度</b><span>${event.stage === 'reading_state' ? '正在读取状态' : '正在等待 Rust Core / Fribbels 评价'} · ${esc(event.name)}</span></div>`
+  if (event.type === 'tool_finished') return `<div><b>结果</b><span>${esc(event.name)}</span><details><summary>结构化输出</summary><pre>${esc(JSON.stringify(event.result, null, 2))}</pre></details></div>`
+  if (event.type === 'decision_recorded') return `<div><b>决策</b><span>Rust Decision Engine 已返回 ${esc(event.tool_name)}</span><details><summary>查看决策数据</summary><pre>${esc(JSON.stringify(event.result, null, 2))}</pre></details></div>`
+  if (event.type === 'budget_blocked') return `<div><b>预算</b><span>达到 ${number(event.used_tokens)} / ${number(event.token_budget)}，停止新请求</span></div>`
+  if (event.type === 'assistant_reply') return '<div><b>回复</b><span>模型基于工具结果完成解释</span></div>'
+  if (event.type === 'run_finished') return `<div><b>结束</b><span>${statusLabel(event.status)}</span></div>`
+  if (event.type === 'cancelled') return `<div><b>取消</b><span>${esc(event.message)}</span></div>`
+  if (event.type === 'error') return `<div><b>错误</b><span>${esc(event.message)}</span><code>${esc(event.code)}</code></div>`
+  return ''
+}
+
+function renderTaskHistory() {
+  const runs = [...taskState.tasks]
+  if (liveRun && !runs.some((run) => run.id === liveRun.id)) runs.push(liveRun)
+  $('task-count').textContent = runs.length
+  if (!runs.length) {
+    $('task-list').innerHTML = '<div class="history-empty">完成一次 Agent 任务后，可以在这里查看完整 Trace。</div>'
+    $('task-detail').innerHTML = '<div class="history-empty">选择一个历史任务，查看用户消息、模型调用、Tool、决策、Usage 和结果。</div>'
+    return
+  }
+  if (!selectedTaskId || !runs.some((run) => run.id === selectedTaskId)) selectedTaskId = runs[runs.length - 1].id
+  $('task-list').innerHTML = [...runs].reverse().map((run, index) => `<button class="task-row ${run.id === selectedTaskId ? 'selected' : ''}" data-task="${esc(run.id)}"><span>${String(runs.length - index).padStart(2, '0')}</span><div><strong>${esc(run.user_input)}</strong><small>${new Date(run.started_at_unix_ms).toLocaleString('zh-CN')} · ${run.events.length} 个事件</small></div><b class="task-status ${run.status}">${statusLabel(run.status)}</b></button>`).join('')
+  const run = runs.find((item) => item.id === selectedTaskId)
+  $('task-detail').innerHTML = `<div class="task-detail-head"><div><small>${esc(run.id)}</small><h3>${esc(run.user_input)}</h3></div><span class="task-status ${run.status}">${statusLabel(run.status)}</span></div><div class="task-events">${run.events.map(eventHtml).join('')}</div>${run.reply ? `<div class="task-final"><b>最终回复</b><p>${esc(run.reply)}</p></div>` : ''}${run.error ? `<div class="task-final error"><b>终止原因</b><p>${esc(run.error)}</p></div>` : ''}`
+}
+
+function progressFor(event) {
+  if (event.type === 'run_started') return '正在理解用户目标'
+  if (event.type === 'model_request_started') return `正在等待模型第 ${event.call_index} 次响应`
+  if (event.type === 'tool_requested') return `正在调用 ${event.name}`
+  if (event.type === 'tool_progress') return event.stage === 'reading_state' ? `正在读取状态 · ${event.name}` : `正在等待 Fribbels 评价 · ${event.name}`
+  if (event.type === 'tool_finished') return `工具执行完成 · ${event.name}`
+  if (event.type === 'assistant_reply') return '正在生成最终回复'
+  if (event.type === 'cancelled') return '任务已取消，正在保存已完成轨迹'
+  if (event.type === 'error') return '任务结束，正在保存错误轨迹'
+  return progressLabel
+}
+
+function receiveTrace(event) {
+  if (!liveRun || liveRun.id !== event.run_id) {
+    liveRun = { id: event.run_id, status: 'running', started_at_unix_ms: event.recorded_at_unix_ms, finished_at_unix_ms: null, user_input: event.user_input ?? '', reply: null, error: null, events: [] }
+  }
+  if (!liveRun.events.some((item) => item.sequence === event.sequence)) liveRun.events.push(event)
+  if (event.type === 'run_started') liveRun.user_input = event.user_input
+  if (event.type === 'assistant_reply') liveRun.reply = event.content
+  if (event.type === 'run_finished') liveRun.status = event.status
+  if (event.type === 'cancelled') { liveRun.status = 'cancelled'; liveRun.error = event.message }
+  if (event.type === 'error') { liveRun.status = 'failed'; liveRun.error = event.message }
+  progressLabel = progressFor(event)
+  if (!$('progress').hidden) $('progress-text').textContent = `${progressLabel}…`
+  selectedTaskId = liveRun.id
+  renderAgent()
+  renderTaskHistory()
+}
+
+async function refreshTasks() {
+  taskState = await api.tasks()
+  liveRun = taskState.active
+  renderTaskHistory()
 }
 function renderList() {
   $('rank-count').textContent = state.recommendations.length
@@ -297,6 +365,7 @@ async function performAgent(input) {
     clearInterval(timer)
     busy = false
     $('progress').hidden = true
+    try { await refreshTasks() } catch { /* State response still contains the latest task. */ }
     render()
     if (failed) $('agent-input').value = input
   }
@@ -330,6 +399,45 @@ $('guide-close').onclick = () => $('guide-dialog').close()
 $('agent-form').onsubmit = (event) => {
   event.preventDefault()
   performAgent($('agent-input').value)
+}
+$('task-list').onclick = (event) => {
+  const row = event.target.closest('[data-task]')
+  if (row) {
+    selectedTaskId = row.dataset.task
+    renderTaskHistory()
+  }
+}
+$('save-session').onclick = async () => {
+  try {
+    const saved = await api.exportSession()
+    const blob = new Blob([`${JSON.stringify(saved, null, 2)}\n`], { type: 'application/json' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `hsr-agent-session-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+    link.click()
+    URL.revokeObjectURL(link.href)
+  } catch (e) {
+    $('error').textContent = e.message
+    $('error').hidden = false
+  }
+}
+$('load-session').onclick = () => $('session-file').click()
+$('session-file').onchange = async () => {
+  const file = $('session-file').files[0]
+  $('session-file').value = ''
+  if (!file) return
+  try {
+    const saved = JSON.parse(await file.text())
+    state = await api.importSession(saved, state.revision)
+    await refreshTasks()
+    selectedTaskId = taskState.tasks.at(-1)?.id ?? null
+    tab = 'ranked'
+    $('error').hidden = true
+    render()
+  } catch (e) {
+    $('error').textContent = e instanceof SyntaxError ? '会话文件不是有效 JSON。' : e.message
+    $('error').hidden = false
+  }
 }
 $('model-settings').onclick = () => {
   const config = state.model_config
@@ -381,6 +489,8 @@ $('cancel').onclick = async () => {
 }
 try {
   ;[assets, state] = await Promise.all([AssetProvider.load(), api.start()])
+  taskState = await api.tasks()
+  eventSource = api.events(receiveTrace)
   render()
 } catch (e) {
   $('error').textContent = `暂时无法连接培养终端：${e.message} 请确认服务已启动后刷新页面。`

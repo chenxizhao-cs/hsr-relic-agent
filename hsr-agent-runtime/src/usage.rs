@@ -1,8 +1,8 @@
 use crate::ModelConfig;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -14,7 +14,7 @@ impl TokenUsage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsageRecord {
     pub sequence: u64,
     pub response_id: String,
@@ -23,10 +23,10 @@ pub struct UsageRecord {
     pub output_tokens: u64,
     pub total_tokens: u64,
     pub cost: f64,
-    pub recorded_at_unix_ms: u128,
+    pub recorded_at_unix_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct UsageSummary {
     pub calls: u64,
     pub input_tokens: u64,
@@ -35,7 +35,7 @@ pub struct UsageSummary {
     pub total_cost: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct UsageLedger {
     records: Vec<UsageRecord>,
 }
@@ -60,7 +60,7 @@ impl UsageLedger {
             recorded_at_unix_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_millis(),
+                .as_millis() as u64,
         };
         self.records.push(record.clone());
         record
@@ -84,6 +84,21 @@ impl UsageLedger {
     }
     pub fn can_start_request(&self, config: &ModelConfig) -> bool {
         self.summary().total_tokens < config.token_budget()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for (index, record) in self.records.iter().enumerate() {
+            if record.sequence != index as u64 + 1
+                || record.total_tokens != record.input_tokens.saturating_add(record.output_tokens)
+                || !record.cost.is_finite()
+                || record.cost < 0.0
+                || record.response_id.is_empty()
+                || record.model.is_empty()
+            {
+                return Err("Usage 历史包含无效记录".into());
+            }
+        }
+        Ok(())
     }
 }
 
