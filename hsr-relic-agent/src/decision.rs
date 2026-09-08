@@ -232,12 +232,13 @@ impl<E: Evaluator> DecisionEngine<E> {
     }
 
     pub fn set_goal(&mut self, character_id: &str) -> Result<()> {
-        if !self.account.characters.contains_key(character_id) {
-            return Err(Error(format!("账号中没有角色 {character_id}")));
+        self.set_cultivation_goal(CultivationGoal::balanced(character_id))
+    }
+
+    pub fn set_cultivation_goal(&mut self, goal: CultivationGoal) -> Result<()> {
+        if !self.account.characters.contains_key(&goal.character_id) {
+            return Err(Error(format!("账号中没有角色 {}", goal.character_id)));
         }
-        let goal = CultivationGoal {
-            character_id: character_id.into(),
-        };
         // Validate evaluator support before changing the active goal.
         for relic in self.account.relics.values() {
             self.evaluate(&self.account, &goal, relic)?;
@@ -380,7 +381,50 @@ impl<E: Evaluator> DecisionEngine<E> {
         {
             return Err(Error("Evaluator 返回无效 Build 比较指标".into()));
         }
-        let priority = (evaluation.projected_score - baseline).max(0.0) / remaining * damage_ratio;
+        let average_gain = (evaluation.projected_score - baseline).max(0.0);
+        let strategy = goal.strategy();
+        let (priority, strategy_calculation) = match strategy {
+            CultivationStrategy::Conservative => {
+                let readiness = if evaluation.projected_score > 0.0 {
+                    (evaluation.current_score / evaluation.projected_score).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let priority =
+                    average_gain / remaining.powf(1.5) * (0.5 + readiness * 0.5) * damage_ratio;
+                (
+                    priority,
+                    format!(
+                        "平均正收益 {:.2} / 剩余 {:.0} 步^1.5 × 当前成熟度权重 {:.3} × Build 伤害比 {:.3}",
+                        average_gain,
+                        remaining,
+                        0.5 + readiness * 0.5,
+                        damage_ratio
+                    ),
+                )
+            }
+            CultivationStrategy::Balanced => (
+                average_gain / remaining * damage_ratio,
+                format!(
+                    "平均正收益 {:.2} / 剩余 {:.0} 步 × Build 伤害比 {:.3}",
+                    average_gain, remaining, damage_ratio
+                ),
+            ),
+            CultivationStrategy::HighPotential => {
+                let ceiling = details
+                    .as_ref()
+                    .map_or(evaluation.projected_score, |metrics| metrics.relic.best)
+                    .max(evaluation.projected_score);
+                let ceiling_gain = (ceiling - baseline).max(0.0);
+                (
+                    ceiling_gain / remaining.sqrt() * damage_ratio,
+                    format!(
+                        "best 上限正收益 {:.2} / √剩余 {:.0} 步 × Build 伤害比 {:.3}",
+                        ceiling_gain, remaining, damage_ratio
+                    ),
+                )
+            }
+        };
         let set_match = self
             .recommendation_database
             .as_ref()
@@ -393,17 +437,18 @@ impl<E: Evaluator> DecisionEngine<E> {
             RecommendationMatch::NotRecommended => "；套装未列入游戏静态推荐",
         };
         let reason = format!(
-            "{} 当前 {:.2}，预计满级 {:.2}，同部位参考基线 {:.2}；正收益 / 剩余 {:.0} 步 × Build 伤害比 {:.3} = {:.2}",
+            "{} 当前 {:.2}，预计满级 {:.2}，同部位参考基线 {:.2}；{}；策略优先级 {:.2}（{}）",
             self.evaluator.name(),
             evaluation.current_score,
             evaluation.projected_score,
             baseline,
-            remaining,
-            damage_ratio,
-            priority
+            strategy_calculation,
+            priority,
+            strategy.explanation()
         ) + set_reason;
         Ok(UpgradeRecommendation {
             relic_id: relic.id.clone(),
+            strategy,
             set_match,
             current_score: evaluation.current_score,
             projected_score: evaluation.projected_score,

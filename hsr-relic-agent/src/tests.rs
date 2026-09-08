@@ -406,6 +406,75 @@ fn switching_goal_reverses_candidate_order() {
 }
 
 #[test]
+fn structured_preferences_select_only_controlled_strategies() {
+    let conservative = CultivationPreferences {
+        material_pressure: MaterialPressure::Tight,
+        risk_tolerance: RiskTolerance::Conservative,
+        objective: CultivationObjective::Balanced,
+    };
+    let high_potential = CultivationPreferences {
+        material_pressure: MaterialPressure::Relaxed,
+        risk_tolerance: RiskTolerance::Aggressive,
+        objective: CultivationObjective::Balanced,
+    };
+    assert_eq!(conservative.strategy(), CultivationStrategy::Conservative);
+    assert_eq!(
+        CultivationPreferences::default().strategy(),
+        CultivationStrategy::Balanced
+    );
+    assert_eq!(
+        high_potential.strategy(),
+        CultivationStrategy::HighPotential
+    );
+    assert_eq!(
+        CultivationPreferences {
+            objective: CultivationObjective::ImmediatePower,
+            ..high_potential
+        }
+        .strategy(),
+        CultivationStrategy::Conservative
+    );
+    assert_eq!(
+        CultivationPreferences {
+            objective: CultivationObjective::MaxPotential,
+            ..conservative
+        }
+        .strategy(),
+        CultivationStrategy::HighPotential
+    );
+}
+
+#[test]
+fn default_goal_preserves_the_original_balanced_priority_formula() {
+    let mut e = DecisionEngine::new(load_scanner_v4(DEMO_ACCOUNT, 8).unwrap(), MockEvaluator);
+    e.set_goal("1205").unwrap();
+    assert_eq!(
+        e.goal().unwrap().preferences,
+        CultivationPreferences::default()
+    );
+    assert_eq!(e.goal().unwrap().strategy(), CultivationStrategy::Balanced);
+    for candidate in e.rank_candidates().unwrap() {
+        let relic = &e.account().relics[&candidate.relic_id];
+        let remaining = f64::from((15 - relic.level) / 3);
+        let original = (candidate.projected_score - candidate.baseline_score).max(0.0) / remaining;
+        assert!((candidate.priority - original).abs() < 1e-12);
+        assert_eq!(candidate.strategy, CultivationStrategy::Balanced);
+    }
+}
+
+#[test]
+fn old_goal_json_defaults_to_balanced_preferences() {
+    let goal: CultivationGoal = serde_json::from_str(r#"{"character_id":"1205"}"#).unwrap();
+    assert_eq!(goal, CultivationGoal::balanced("1205"));
+    assert!(
+        serde_json::from_str::<CultivationPreferences>(
+            r#"{"material_pressure":"scarce","risk_tolerance":"balanced","objective":"balanced"}"#
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn account_state_round_trips_for_versioned_session_storage() {
     let mut account = load_scanner_v4(DEMO_ACCOUNT, 8).unwrap();
     account

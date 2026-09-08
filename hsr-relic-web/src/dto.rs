@@ -44,6 +44,7 @@ pub(super) fn snapshot(data: &SessionData) -> ApiResult<Value> {
         vec![]
     };
     let recommendations: Vec<_> = recommendations.into_iter().map(|r| json!({"relic_id":r.relic_id,
+        "strategy":r.strategy,
         "set_match":r.set_match,
         "current_score":r.current_score,"projected_score":r.projected_score,"baseline_score":r.baseline_score,
         "priority":r.priority,"reason":r.reason,"details":r.details})).collect();
@@ -63,6 +64,9 @@ pub(super) fn snapshot(data: &SessionData) -> ApiResult<Value> {
     Ok(
         json!({"revision":data.revision,"evaluator":data.evaluator.name(),"characters":characters,
         "target_id":e.goal().map(|g| &g.character_id),"selected_id":e.selected().map(|r| &r.id),
+        "cultivation_intent":e.goal().map(|g| json!({"character_id":g.character_id,
+            "preferences":g.preferences,"strategy":g.strategy(),
+            "strategy_explanation":g.strategy().explanation()})),
         "inventory":inventory,"recommendations":recommendations,"selected_evaluation":selected_evaluation,
         "remaining_budget":a.upgrade_steps,"history":history,"last_result":data.last_result,
         "account_summary":data.import_summary,

@@ -13,9 +13,7 @@ fn account() -> AccountState {
     load_scanner_v4(DEMO_ACCOUNT, 8).unwrap()
 }
 fn goal(id: &str) -> CultivationGoal {
-    CultivationGoal {
-        character_id: id.into(),
-    }
+    CultivationGoal::balanced(id)
 }
 fn evaluator() -> FribbelsEvaluator {
     FribbelsEvaluator::new(FribbelsConfig::default())
@@ -79,6 +77,67 @@ fn goal_changes_ranking_and_build_ratio_really_enters_priority() {
     let score_only = (r.projected_score - r.baseline_score).max(0.0) / 5.0;
     close(r.priority, score_only * d.damage_ratio(), 1e-9);
     assert!((r.priority - score_only).abs() > 0.1);
+}
+
+#[test]
+fn real_fixture_exposes_a_deterministic_strategy_tradeoff() {
+    let database_json = std::fs::read_to_string(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../data/.generated/character-relic-recommendations-v1.json"),
+    )
+    .unwrap();
+    let mut e = engine().with_recommendation_database(Arc::new(
+        load_character_relic_database(&database_json).unwrap(),
+    ));
+    e.set_cultivation_goal(CultivationGoal {
+        character_id: "1205".into(),
+        preferences: CultivationPreferences {
+            material_pressure: MaterialPressure::Tight,
+            risk_tolerance: RiskTolerance::Conservative,
+            objective: CultivationObjective::ImmediatePower,
+        },
+    })
+    .unwrap();
+    let conservative = e.rank_candidates().unwrap();
+
+    e.set_cultivation_goal(CultivationGoal {
+        character_id: "1205".into(),
+        preferences: CultivationPreferences {
+            material_pressure: MaterialPressure::Relaxed,
+            risk_tolerance: RiskTolerance::Aggressive,
+            objective: CultivationObjective::MaxPotential,
+        },
+    })
+    .unwrap();
+    let high_potential = e.rank_candidates().unwrap();
+
+    assert_eq!(conservative[0].strategy, CultivationStrategy::Conservative);
+    assert_eq!(
+        high_potential[0].strategy,
+        CultivationStrategy::HighPotential
+    );
+    assert_ne!(
+        conservative[0].relic_id,
+        high_potential[0].relic_id,
+        "conservative={:?}, high_potential={:?}",
+        conservative
+            .iter()
+            .map(|item| (&item.relic_id, item.priority))
+            .collect::<Vec<_>>(),
+        high_potential
+            .iter()
+            .map(|item| (&item.relic_id, item.priority))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(conservative[0].relic_id, "9100002");
+    assert_eq!(high_potential[0].relic_id, "9100001");
+    let high = &high_potential[0];
+    let remaining = f64::from((15 - e.account().relics[&high.relic_id].level) / 3);
+    let details = high.details.as_ref().unwrap();
+    let expected = (details.relic.best.max(high.projected_score) - high.baseline_score).max(0.0)
+        / remaining.sqrt()
+        * details.damage_ratio();
+    close(high.priority, expected, 1e-9);
 }
 
 #[test]

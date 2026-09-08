@@ -26,8 +26,8 @@
     <section class="agent-panel panel" aria-label="遗器培养 Agent">
       <div class="agent-main">
         <div class="panel-label"><span>培养 Agent <small class="agent-badge">LLM + TOOLS</small></span><small id="agent-model">等待配置</small></div>
-        <div id="agent-reply" class="agent-reply"><span class="agent-mark">✦</span><div><strong>用自然语言告诉我目标</strong><p>例如：我想培养 Blade，材料比较紧，帮我看看下一件最值得强化什么。</p></div></div>
-        <form id="agent-form" class="agent-form"><label for="agent-input" class="sr-only">培养目标</label><textarea id="agent-input" maxlength="4000" rows="2" placeholder="描述你已经决定培养的角色和要求…" required></textarea><button id="agent-submit" class="primary-button" type="submit">交给 Agent <span>↗</span></button></form>
+        <div id="agent-reply" class="agent-reply"><span class="agent-mark">✦</span><div><strong>用自然语言告诉我目标</strong><p>例如：我想培养 Blade，材料很紧，想保守一点，优先快速提升当前战力。</p></div></div>
+        <form id="agent-form" class="agent-form"><label for="agent-input" class="sr-only">培养目标</label><textarea id="agent-input" maxlength="4000" rows="2" placeholder="描述目标角色、材料压力、风险倾向和培养目标…" required></textarea><button id="agent-submit" class="primary-button" type="submit">交给 Agent <span>↗</span></button></form>
         <details id="agent-trace" class="agent-trace" hidden open><summary>实时 Agent → Tool 轨迹</summary><div id="agent-events"></div></details>
       </div>
       <aside class="usage-panel" aria-label="Token 和费用统计">

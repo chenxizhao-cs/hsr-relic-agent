@@ -44,7 +44,7 @@ fn scripted_model() -> (String, thread::JoinHandle<Vec<Value>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let responses = [
-        json!({"id":"agent-1","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"set_target_character","arguments":"{\"character\":\"Blade\"}"}}]}}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}),
+        json!({"id":"agent-1","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"set_cultivation_intent","arguments":"{\"character\":\"Blade\",\"material_pressure\":\"tight\",\"risk_tolerance\":\"conservative\",\"objective\":\"immediate_power\"}"}}]}}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}),
         json!({"id":"agent-2","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-2","type":"function","function":{"name":"get_next_relic_recommendation","arguments":"{}"}}]}}],"usage":{"prompt_tokens":150,"completion_tokens":25,"total_tokens":175}}),
         json!({"id":"agent-3","choices":[{"message":{"role":"assistant","content":"为 Blade 推荐遗器 #9200003。数值来自 Fribbels，排序来自 Rust Decision Engine。"}}],"usage":{"prompt_tokens":200,"completion_tokens":30,"total_tokens":230}}),
         json!({"id":"agent-4","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-4","type":"function","function":{"name":"get_current_state","arguments":"{}"}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}),
@@ -121,6 +121,7 @@ async fn scripted_model_calls_tools_real_fribbels_and_budget_blocks_next_call() 
     .await;
     assert_eq!(status, StatusCode::OK, "{state}");
     assert_eq!(state["target_id"], "1205");
+    assert_eq!(state["cultivation_intent"]["strategy"], "conservative");
     assert_eq!(state["selected_id"], "9200003");
     assert_eq!(state["usage"]["summary"]["input_tokens"], 450);
     assert_eq!(state["usage"]["summary"]["output_tokens"], 75);
@@ -131,6 +132,14 @@ async fn scripted_model_calls_tools_real_fribbels_and_budget_blocks_next_call() 
             .as_str()
             .unwrap()
             .contains("#9200003")
+    );
+    assert!(
+        state["last_agent"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["type"] == "cultivation_intent_resolved"
+                && event["strategy"] == "conservative")
     );
     let (status, saved) = request(&app, "GET", "/api/session/export", token, Value::Null).await;
     assert_eq!(status, StatusCode::OK);

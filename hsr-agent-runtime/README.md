@@ -18,7 +18,7 @@ LLM 不获得重新实现评分或排序的职责。系统提示要求它先调�
 |---|---|
 | `src/config.rs` | `ModelConfig`、安全的公开视图、环境变量和 Web patch 校验 |
 | `src/provider.rs` | `ModelProvider` 抽象及可取消的 OpenAI-compatible Chat Completions 实现 |
-| `src/tools.rs` | 五个 Agent Tool 对现有 Rust core 的薄封装 |
+| `src/tools.rs` | 五个 Agent Tool、结构化意图校验及对现有 Rust core 的薄封装 |
 | `src/runtime.rs` | 最多六轮的 tool loop、多轮上下文、取消/预算边界和统一 `TraceEvent` |
 | `src/usage.rs` | API 响应 usage 的逐次 ledger、累计与费用计算 |
 
@@ -42,13 +42,15 @@ Context Length 不是对远端模型真实上下文窗口的修改；服务端�
 
 | Tool | 输入 | 输出与副作用 |
 |---|---|---|
-| `set_target_character` | 角色 ID / 中英文名 | 校验账号角色并设置单一培养目标 |
+| `set_cultivation_intent` | 角色、材料压力、风险倾向、培养目标 | 用 Rust 闭集枚举校验意图，选择保守/均衡/高潜力策略 |
 | `get_current_state` | 无 | 角色、当前目标/选择、剩余强化步数、历史数量 |
 | `get_relic_candidates` | 可选 `limit` | Rust 排序后的候选及 Evaluator 结构化指标；不改变选择 |
 | `get_next_relic_recommendation` | 无 | 由 Rust 推荐并选中下一件遗器 |
 | `get_upgrade_history` | 无 | 已接受的强化观察及 Continue / Hold / Stop |
 
 `CoreTools` 不包含评分阈值、候选排序或三态决策算法。一次 Agent run 在 `DecisionEngine` 副本上工作；正常完成和预算在 Tool 后达到时提交。用户取消时，取消前已经完成的 Tool 状态也会保留；正在执行但未完成的 core 操作仍由原有事务边界回滚。
+
+LLM 只提交受控意图，不能提交评分、priority、阈值或 `Continue / Hold / Stop`。Runtime 在 Tool 成功后从 Rust `DecisionEngine` 读取已校验的意图和实际策略，生成 `cultivation_intent_resolved` Trace 事件。缺少角色或关键偏好冲突时，模型可以先调用 `get_current_state`，再用自然语言追问；没有表达偏好时回退到均衡默认。
 
 ## Usage、费用和预算
 
@@ -72,7 +74,7 @@ cargo clippy --offline --manifest-path hsr-agent-runtime/Cargo.toml --all-target
 
 ## R4 / R5 公共结构
 
-- `TraceEvent` 带 run ID、事件序号和 Unix 毫秒时间；`AgentEvent` 统一模型、Tool、决策、usage、回复、错误和取消语义。
+- `TraceEvent` 带 run ID、事件序号和 Unix 毫秒时间；`AgentEvent` 统一模型、结构化意图、Tool、决策、usage、回复、错误和取消语义。
 - `run_with_context` 同时接收历史 `ChatMessage` 和事件回调。每次事件只生成一次：Web SSE 实时发送它，任务结束后同一个 `AgentRun` 被保存。
 - Provider 使用可取消的异步 HTTP future；Runtime 轮次与 Tool 边界检查同一取消标志，Fribbels Evaluator 继续使用该标志终止 Adapter 子进程。
 - `ChatMessage`、`AgentRun`、`TraceEvent` 和 `UsageLedger` 均可序列化/反序列化，供 Web 的版本化 Session JSON 保存完整上下文。

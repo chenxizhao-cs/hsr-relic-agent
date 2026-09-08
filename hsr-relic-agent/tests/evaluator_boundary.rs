@@ -5,9 +5,7 @@ fn account() -> AccountState {
     load_scanner_v4(DEMO_ACCOUNT, 8).unwrap()
 }
 fn goal() -> CultivationGoal {
-    CultivationGoal {
-        character_id: "1205".into(),
-    }
+    CultivationGoal::balanced("1205")
 }
 
 #[test]

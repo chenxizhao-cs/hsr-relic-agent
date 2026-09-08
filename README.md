@@ -85,7 +85,13 @@ cargo run --manifest-path hsr-relic-web/Cargo.toml
 
 > 我想培养 Blade，材料比较紧，帮我看看下一件最值得强化什么。
 
-Agent 会调用 Rust Tools 设置目标并查询推荐。页面会通过 SSE 实时追加模型请求、Tool 进度、确定性决策和真实 Token usage；任务运行时可以点击“取消本次计算”。
+Agent 会先把自然语言转换为受控的结构化培养意图：目标角色、材料压力、风险倾向和培养目标。Rust 校验这些枚举后选择保守、均衡或高潜力策略，再由同一个 `DecisionEngine` 计算候选。没有表达额外偏好时使用原来的均衡策略。
+
+- 保守：强调当前质量，并加重剩余强化步数的成本；
+- 均衡：保持原来的“平均满级正收益 / 剩余步数 × Build 比率”；
+- 高潜力：参考 Fribbels best 上限，并弱化剩余步数惩罚。
+
+页面会通过 SSE 实时追加模型请求、提取后的结构化意图、Rust 采用的策略、Tool 进度、确定性决策和真实 Token usage；任务运行时可以点击“取消本次计算”。如果角色缺失或关键偏好无法可靠归类，Agent 可以先读取当前状态再追问。
 
 LLM 不自己计算遗器分数，也不重新实现候选排序。完整链路是：
 
@@ -98,7 +104,7 @@ Web UI
   → Fribbels Evaluator
 ```
 
-Fribbels 提供确定性评分和 Build 数值，Rust 决定候选顺序及 Continue / Hold / Stop，LLM 只负责理解目标、选择工具和解释结构化结果。
+Fribbels 提供确定性评分和 Build 数值；LLM 负责把用户语言转换为有限偏好并选择工具；Rust 将偏好映射到受控策略，计算候选顺序及 Continue / Hold / Stop。模型不能提交评分、权重、阈值或决策覆盖。
 
 ## 模型设置与 Token 费用
 
@@ -193,6 +199,7 @@ cargo test --manifest-path hsr-relic-web/Cargo.toml --test agent_e2e -- --ignore
 - Rust 候选排序和 Continue / Hold / Stop；
 - Web 与 CLI 共用同一个 core；
 - LLM Tool 调用、模型配置、真实 Token usage、费用和 Token Budget；
+- LLM 提取目标、材料压力、风险倾向和培养目标，Rust 以三种有限策略确定性计算候选；
 - SSE 实时 Agent Trace，以及可向模型请求和 Fribbels 子进程传播的取消；
 - 多轮模型上下文、历史任务浏览和版本化 Session JSON 保存/加载。
 - Reliquary Archiver v4 原始 JSON 上传、结构化校验、装备关系转换和事务式会话替换；

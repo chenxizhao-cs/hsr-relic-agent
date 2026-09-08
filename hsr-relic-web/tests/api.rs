@@ -80,6 +80,7 @@ async fn core_loop_updates_same_relic_and_resumes_hold_explicitly() {
         json!({"action":"target","character_id":"1205"}),
     )
     .await;
+    assert_eq!(state["cultivation_intent"]["strategy"], "balanced");
     act(
         &app,
         &token,

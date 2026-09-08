@@ -98,9 +98,101 @@ pub struct Relic {
     pub discarded: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterialPressure {
+    Relaxed,
+    #[default]
+    Normal,
+    Tight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskTolerance {
+    Conservative,
+    #[default]
+    Balanced,
+    Aggressive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CultivationObjective {
+    ImmediatePower,
+    #[default]
+    Balanced,
+    MaxPotential,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct CultivationPreferences {
+    #[serde(default)]
+    pub material_pressure: MaterialPressure,
+    #[serde(default)]
+    pub risk_tolerance: RiskTolerance,
+    #[serde(default)]
+    pub objective: CultivationObjective,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CultivationStrategy {
+    Conservative,
+    Balanced,
+    HighPotential,
+}
+
+impl CultivationPreferences {
+    pub fn strategy(self) -> CultivationStrategy {
+        if self.objective == CultivationObjective::ImmediatePower
+            || (self.objective == CultivationObjective::Balanced
+                && (self.material_pressure == MaterialPressure::Tight
+                    || self.risk_tolerance == RiskTolerance::Conservative))
+        {
+            CultivationStrategy::Conservative
+        } else if self.objective == CultivationObjective::MaxPotential
+            || (self.objective == CultivationObjective::Balanced
+                && self.material_pressure == MaterialPressure::Relaxed
+                && self.risk_tolerance == RiskTolerance::Aggressive)
+        {
+            CultivationStrategy::HighPotential
+        } else {
+            CultivationStrategy::Balanced
+        }
+    }
+}
+
+impl CultivationStrategy {
+    pub fn explanation(self) -> &'static str {
+        match self {
+            Self::Conservative => "保守：强调当前质量并加重剩余投入成本",
+            Self::Balanced => "均衡：按平均满级正收益除以剩余强化步数",
+            Self::HighPotential => "高潜力：参考 best 上限并弱化剩余投入惩罚",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CultivationGoal {
     pub character_id: String,
+    #[serde(default)]
+    pub preferences: CultivationPreferences,
+}
+
+impl CultivationGoal {
+    pub fn balanced(character_id: impl Into<String>) -> Self {
+        Self {
+            character_id: character_id.into(),
+            preferences: CultivationPreferences::default(),
+        }
+    }
+
+    pub fn strategy(&self) -> CultivationStrategy {
+        self.preferences.strategy()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,6 +288,7 @@ mod decision_map {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpgradeRecommendation {
     pub relic_id: String,
+    pub strategy: CultivationStrategy,
     pub set_match: crate::RecommendationMatch,
     pub current_score: f64,
     pub projected_score: f64,

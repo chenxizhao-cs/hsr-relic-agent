@@ -109,7 +109,7 @@ function renderAgent() {
   $('agent-submit').disabled = busy
   const run = liveRun ?? state.last_agent
   if (!run) {
-    $('agent-reply').innerHTML = '<span class="agent-mark">✦</span><div><strong>用自然语言告诉我目标</strong><p>例如：我想培养 Blade，材料比较紧，帮我看看下一件最值得强化什么。</p></div>'
+    $('agent-reply').innerHTML = '<span class="agent-mark">✦</span><div><strong>用自然语言告诉我目标</strong><p>例如：我想培养 Blade，材料很紧，想保守一点，优先快速提升当前战力。</p></div>'
     $('agent-trace').hidden = true
     return
   }
@@ -132,6 +132,14 @@ function eventHtml(event) {
   if (event.type === 'tool_requested') return `<div><b>Tool</b><span>${esc(event.name)}</span><code>${esc(JSON.stringify(event.arguments))}</code></div>`
   if (event.type === 'tool_progress') return `<div><b>进度</b><span>${event.stage === 'reading_state' ? '正在读取状态' : '正在等待 Rust Core / Fribbels 评价'} · ${esc(event.name)}</span></div>`
   if (event.type === 'tool_finished') return `<div><b>结果</b><span>${esc(event.name)}</span><details><summary>结构化输出</summary><pre>${esc(JSON.stringify(event.result, null, 2))}</pre></details></div>`
+  if (event.type === 'cultivation_intent_resolved') {
+    const p = event.intent.preferences
+    const material = { relaxed: '宽松', normal: '一般', tight: '紧张' }[p.material_pressure] ?? p.material_pressure
+    const risk = { conservative: '保守', balanced: '均衡', aggressive: '激进' }[p.risk_tolerance] ?? p.risk_tolerance
+    const objective = { immediate_power: '当前即战力', balanced: '平衡', max_potential: '满级潜力' }[p.objective] ?? p.objective
+    const strategy = { conservative: '保守', balanced: '均衡', high_potential: '高潜力' }[event.strategy] ?? event.strategy
+    return `<div><b>培养意图</b><span>角色 ${esc(event.intent.character_id)} · 材料${esc(material)} · 风险${esc(risk)} · 目标${esc(objective)} → Rust ${esc(strategy)}策略</span><details><summary>结构化意图</summary><pre>${esc(JSON.stringify(event.intent, null, 2))}</pre></details></div>`
+  }
   if (event.type === 'decision_recorded') return `<div><b>决策</b><span>Rust Decision Engine 已返回 ${esc(event.tool_name)}</span><details><summary>查看决策数据</summary><pre>${esc(JSON.stringify(event.result, null, 2))}</pre></details></div>`
   if (event.type === 'budget_blocked') return `<div><b>预算</b><span>达到 ${number(event.used_tokens)} / ${number(event.token_budget)}，停止新请求</span></div>`
   if (event.type === 'assistant_reply') return '<div><b>回复</b><span>模型基于工具结果完成解释</span></div>'
@@ -162,6 +170,7 @@ function progressFor(event) {
   if (event.type === 'tool_requested') return `正在调用 ${event.name}`
   if (event.type === 'tool_progress') return event.stage === 'reading_state' ? `正在读取状态 · ${event.name}` : `正在等待 Fribbels 评价 · ${event.name}`
   if (event.type === 'tool_finished') return `工具执行完成 · ${event.name}`
+  if (event.type === 'cultivation_intent_resolved') return `已采用 ${event.strategy} 策略，正在计算候选`
   if (event.type === 'assistant_reply') return '正在生成最终回复'
   if (event.type === 'cancelled') return '任务已取消，正在保存已完成轨迹'
   if (event.type === 'error') return '任务结束，正在保存错误轨迹'

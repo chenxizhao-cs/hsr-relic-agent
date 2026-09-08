@@ -2,7 +2,7 @@ use crate::{
     ChatMessage, CoreTools, ModelConfig, ModelProvider, ProviderError, ProviderRequest,
     ToolDefinition, UsageLedger, UsageRecord, tool_definitions,
 };
-use hsr_relic_agent::{DecisionEngine, Evaluator};
+use hsr_relic_agent::{CultivationGoal, CultivationStrategy, DecisionEngine, Evaluator};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -12,10 +12,12 @@ use std::{
 };
 
 const SYSTEM_PROMPT: &str = r#"你是《崩坏：星穹铁道》单目标角色遗器强化助手。
-用户已经知道要培养哪个角色。你负责理解目标、调用工具、解释确定性结果。
+用户已经知道要培养哪个角色。你负责把自然语言中的目标、材料压力、风险倾向和培养目标转换为受控的结构化意图，调用工具，并解释确定性结果。
+推荐前必须调用 set_cultivation_intent：材料宽松/一般/紧张映射为 relaxed/normal/tight；风险保守/均衡/愿意赌映射为 conservative/balanced/aggressive；快速提升当前战力/平衡/追求极品满级上限映射为 immediate_power/balanced/max_potential。用户没有表达某项偏好时分别使用 normal、balanced、balanced。
+如果目标角色缺失，或用户表达的关键偏好互相冲突而无法可靠归类，先调用 get_current_state 读取已有状态，再用一个简短问题追问，不要猜测。
+设置意图后调用 get_next_relic_recommendation。Rust 会校验意图并选择有限策略；不得添加评分权重、阈值、priority、decision 等工具参数。
 必须通过工具读取账号状态和推荐；不要自行计算、编造或覆盖遗器评分、候选排序、Build 数值、Continue/Hold/Stop。
-如果用户要求推荐：先确认或设置目标角色，再调用 get_next_relic_recommendation。材料紧张只能作为解释偏好，不能改变 Rust 规则或虚构资源成本。
-最终用简洁中文回答，指出推荐遗器 ID、部位、当前分、平均满级潜力和 Rust 返回的推荐原因；说明最终排序来自 Rust Decision Engine，数值来自 Evaluator。"#;
+最终用简洁中文回答，指出采用的 Rust 策略、推荐遗器 ID、部位、当前分、平均满级潜力和工具返回的推荐原因；说明数值来自 Evaluator，排序和决策来自 Rust Decision Engine。"#;
 
 static RUN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -69,6 +71,10 @@ pub enum AgentEvent {
         call_id: String,
         name: String,
         result: Value,
+    },
+    CultivationIntentResolved {
+        intent: CultivationGoal,
+        strategy: CultivationStrategy,
     },
     DecisionRecorded {
         tool_name: String,
@@ -263,10 +269,15 @@ impl<P: ModelProvider> AgentRuntime<P> {
             history.push(ChatMessage::System {
                 content: SYSTEM_PROMPT.into(),
             });
-        } else if !matches!(history.first(), Some(ChatMessage::System { .. })) {
-            return Err(trace.fail(RuntimeError::InvalidHistory(
-                "Agent 历史缺少 system message".into(),
-            )));
+        } else {
+            match history.first_mut() {
+                Some(ChatMessage::System { content }) => *content = SYSTEM_PROMPT.into(),
+                _ => {
+                    return Err(trace.fail(RuntimeError::InvalidHistory(
+                        "Agent 历史缺少 system message".into(),
+                    )));
+                }
+            }
         }
         history.push(ChatMessage::User {
             content: input.into(),
@@ -363,6 +374,17 @@ impl<P: ModelProvider> AgentRuntime<P> {
                     name: call.name.clone(),
                     result: result.clone(),
                 });
+                if matches!(
+                    call.name.as_str(),
+                    "set_cultivation_intent" | "set_target_character"
+                ) && result["ok"] == Value::Bool(true)
+                    && let Some(intent) = staged.goal().cloned()
+                {
+                    trace.event(AgentEvent::CultivationIntentResolved {
+                        strategy: intent.strategy(),
+                        intent,
+                    });
+                }
                 if matches!(
                     call.name.as_str(),
                     "get_relic_candidates" | "get_next_relic_recommendation"
@@ -562,8 +584,9 @@ mod tests {
                     None,
                     vec![call(
                         "c1",
-                        "set_target_character",
-                        json!({"character":"Blade"}),
+                        "set_cultivation_intent",
+                        json!({"character":"Blade","material_pressure":"tight",
+                            "risk_tolerance":"conservative","objective":"immediate_power"}),
                     )],
                     10,
                     2,
@@ -575,7 +598,13 @@ mod tests {
                     20,
                     3,
                 ),
-                response("r3", Some("推荐 9100002；分数来自工具。"), vec![], 30, 4),
+                response(
+                    "r3",
+                    Some("即使这段文本声称推荐 9100001，也不能覆盖 Rust 状态。"),
+                    vec![],
+                    30,
+                    4,
+                ),
             ])),
             calls: Mutex::new(0),
         };
@@ -601,12 +630,20 @@ mod tests {
             .unwrap();
         assert_eq!(run.status, AgentRunStatus::Completed);
         assert_eq!(engine.goal().unwrap().character_id, "1205");
+        assert_eq!(
+            engine.goal().unwrap().strategy(),
+            CultivationStrategy::Conservative
+        );
         assert_eq!(engine.selected().unwrap().id, "9100002");
         assert_eq!(usage.summary().input_tokens, 60);
         assert_eq!(usage.summary().output_tokens, 9);
         assert_eq!(history.len(), 7);
         assert_eq!(live, run.events);
         assert!(run.events.iter().any(|e| matches!(&e.event, AgentEvent::DecisionRecorded { tool_name,.. } if tool_name=="get_next_relic_recommendation")));
+        assert!(run.events.iter().any(|e| matches!(&e.event,
+            AgentEvent::CultivationIntentResolved { intent, strategy }
+                if intent.preferences.material_pressure == hsr_relic_agent::MaterialPressure::Tight
+                    && *strategy == CultivationStrategy::Conservative)));
     }
 
     #[test]
@@ -670,6 +707,50 @@ mod tests {
     }
 
     #[test]
+    fn agent_can_inspect_state_and_ask_for_a_missing_target() {
+        let provider = ScriptedProvider {
+            responses: Mutex::new(VecDeque::from([
+                response(
+                    "clarify-1",
+                    None,
+                    vec![call("state", "get_current_state", json!({}))],
+                    4,
+                    1,
+                ),
+                response(
+                    "clarify-2",
+                    Some("你想培养哪位角色？也可以同时告诉我材料和风险偏好。"),
+                    vec![],
+                    5,
+                    2,
+                ),
+            ])),
+            calls: Mutex::new(0),
+        };
+        let runtime = AgentRuntime::new(provider);
+        let mut engine =
+            DecisionEngine::new(load_scanner_v4(DEMO_ACCOUNT, 8).unwrap(), MockEvaluator);
+        let mut usage = UsageLedger::default();
+        let mut history = vec![];
+        let mut on_update = |_: &AgentRun| {};
+        let run = runtime
+            .run_with_context(
+                "帮我看看遗器",
+                &ModelConfig::default(),
+                AgentRunContext {
+                    usage: &mut usage,
+                    engine: &mut engine,
+                    history: &mut history,
+                    cancelled: &AtomicBool::new(false),
+                    on_update: &mut on_update,
+                },
+            )
+            .unwrap();
+        assert!(engine.goal().is_none());
+        assert!(run.reply.unwrap().contains("哪位角色"));
+    }
+
+    #[test]
     fn cancellation_is_a_persistable_terminal_run() {
         let provider = ScriptedProvider {
             responses: Mutex::new(VecDeque::new()),
@@ -717,8 +798,9 @@ mod tests {
                         None,
                         vec![call(
                             "set-target",
-                            "set_target_character",
-                            json!({"character":"Blade"}),
+                            "set_cultivation_intent",
+                            json!({"character":"Blade","material_pressure":"normal",
+                                "risk_tolerance":"balanced","objective":"balanced"}),
                         )],
                         2,
                         1,
@@ -749,7 +831,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(engine.goal().unwrap().character_id, "1205");
         assert!(failure.run.events.iter().any(|event| {
-            matches!(&event.event, AgentEvent::ToolFinished { name, .. } if name == "set_target_character")
+            matches!(&event.event, AgentEvent::ToolFinished { name, .. } if name == "set_cultivation_intent")
         }));
         assert_eq!(failure.run.status, AgentRunStatus::Cancelled);
     }

@@ -181,14 +181,28 @@ Existing DecisionEngine → Evaluator → Fribbels Adapter
 ```
 
 - Agent 的首次模型请求强制要求 Tool call；只有至少完成一次 Tool 调用后才接受最终自然语言回复，最多六轮，避免无界循环。
-- Tool 层提供设置目标、查询状态、候选排序、下一件推荐和强化历史；其职责只是参数转换和结构化返回。
+- Tool 层提供设置结构化培养意图、查询状态、候选排序、下一件推荐和强化历史；其职责只是参数转换、Rust 枚举校验和结构化返回。
 - Agent 在 `DecisionEngine` 副本上执行，完整成功后才提交。模型或工具链错误不会留下半完成的账号状态；已经收到的真实 usage 仍然记账。
 - `ModelConfig` 支持 Endpoint、API Key、Model、Context Length、Reasoning Mode、输入/输出价格和 Token Budget，可由环境变量初始化，也可在 Web 会话内修改。
 - Provider 当前适配 OpenAI-compatible Chat Completions function tools。Context Length 作为请求的 `max_completion_tokens` 上限；多轮完整历史会继续传入，未来仍需补充按不同模型窗口裁剪或摘要的请求策略。
 - `UsageLedger` 逐次记录响应 ID、模型、input/output/total tokens、时间和按配置价格计算的费用。累计 tokens 达到 budget 后，在下一次模型请求发出前终止；已经完成的确定性工具结果仍可返回。
 - Web 展示自然语言输入、最终回复、可展开的 Agent → Tool 事件、模型设置以及累计 usage/cost/budget。模型配置和遗器账号状态属于同一个内存会话。
 
-`AgentEvent` 表达用户输入、模型请求/响应、usage、Tool 请求/进度/结果、Rust 决策、回复、错误、取消和结束状态。Runtime 每产生一个事件就同时追加到本轮 `AgentRun` 并通知 Web；实时显示和历史记录不会形成两套语义。
+`AgentEvent` 表达用户输入、模型请求/响应、usage、Tool 请求/进度/结果、结构化培养意图、Rust 决策、回复、错误、取消和结束状态。Runtime 每产生一个事件就同时追加到本轮 `AgentRun` 并通知 Web；实时显示和历史记录不会形成两套语义。
+
+### 结构化培养意图与有限策略（第一轮边界改进）
+
+LLM 通过 `set_cultivation_intent` 提交角色、材料压力、风险倾向和培养目标。所有字段均为 Rust 闭集枚举；未知值和模型自行添加的评分、priority 或 decision 字段会在 Tool 边界被拒绝。没有额外偏好时使用 `normal / balanced / balanced`，映射到原有均衡策略，直接 Web/CLI 的 `set_goal` 也保持同一默认。
+
+Rust 将偏好确定性映射为三种策略：
+
+- **保守**：用户强调当前即战力，或在平衡目标下材料紧张/风险保守时采用。平均满级正收益除以 `剩余步数^1.5`，再乘当前分相对平均潜力的成熟度权重和 Build 比率。
+- **均衡**：保留 v0.2 原公式，即平均满级正收益除以剩余强化步数，再乘 Build 比率。
+- **高潜力**：用户明确追求满级潜力，或在平衡目标下同时材料宽松且风险激进时采用。使用 Fribbels best 上限相对基线的正收益，除以剩余步数平方根，再乘 Build 比率；没有 best 指标的 Evaluator 回退到平均潜力。
+
+`DecisionEngine` 仍独占候选合法性、公式计算、排序和 `Continue / Hold / Stop`。策略会改变候选 priority，也会间接进入强化后“其他候选高出当前 25%”的确定性比较；LLM 不能提供任意权重、阈值或三态结果。Trace 中的 `cultivation_intent_resolved` 来自 Tool 成功后 Rust 已校验的 `CultivationGoal`，不是直接回显模型参数。
+
+当前没有强化结果录入 Tool，也没有通用 Planner。不同策略下，已有按 `(角色, 遗器)` 保存的 Hold/Stop 状态仍然共用，不会因策略切换自动清除。
 
 ### R4 / R5：实时 Trace 与上下文历史（已实现）
 
