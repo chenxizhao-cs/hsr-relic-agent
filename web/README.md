@@ -92,7 +92,7 @@ cargo run --manifest-path hsr-relic-web/Cargo.toml -- --lan
 
 响应包含 `revision / account_summary / target_id / selected_id / inventory / recommendations / selected_evaluation / remaining_budget / history / last_result / model_config / usage / last_agent`。遗器和候选中的 `set_match` 为 `recommended / not_recommended / unknown`；前端只展示该结构化结果。`model_config` 不含 Key；`usage` 来自服务端 ledger。分值、排序、限制和决策由 Rust 提供；前端只做字段格式化、ID 联结和交互。大库存页面只渲染前 100/200 张卡片，Rust 仍对完整内部库存排序。
 
-Agent 当前有 `set_cultivation_intent`、`get_current_state`、`get_relic_candidates`、`get_next_relic_recommendation`、`get_upgrade_history` 五个 Tool。首个 Tool 把角色、材料压力、风险倾向和培养目标交给 Rust 校验并映射到有限策略；Trace 单独展示已校验意图和实际策略。详细协议见 [Runtime 文档](../hsr-agent-runtime/README.md)。
+Agent 当前有 `set_cultivation_intent`、`get_current_state`、`get_relic_candidates`、`get_next_relic_recommendation`、`record_upgrade_result`、`get_upgrade_history` 六个 Tool。强化 Tool 与 Web 手动表单都经过 `apply_upgrade_observation → apply_upgrade`；成功后主工作台、预算、历史和 Trace 同步显示同一份状态。模型只提取观察参数并根据 Rust Tool Result 继续或换件。详细协议见 [Runtime 文档](../hsr-agent-runtime/README.md)。
 
 ## 视觉资源来源
 

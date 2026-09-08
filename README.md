@@ -91,6 +91,12 @@ Agent 会先把自然语言转换为受控的结构化培养意图：目标角�
 - 均衡：保持原来的“平均满级正收益 / 剩余步数 × Build 比率”；
 - 高潜力：参考 Fribbels best 上限，并弱化剩余步数惩罚。
 
+实际完成一次强化后，可以在同一对话继续输入：
+
+> 刚才那件从 +3 升到 +6，暴击率增加了 3.24。
+
+Agent 会调用 `record_upgrade_result`；Rust 更新同一件遗器、预算和历史，重新计算 Continue / Hold / Stop，再让 Agent 根据 Tool Result 等待下一次观察或切换候选。增量必须是游戏中实际看到的精确增加量；“出了防御”“歪了一次生命”等没有区分固定值/百分比或缺少数值的描述不会被猜测，Agent 应先读取当前状态并追问。
+
 页面会通过 SSE 实时追加模型请求、提取后的结构化意图、Rust 采用的策略、Tool 进度、确定性决策和真实 Token usage；任务运行时可以点击“取消本次计算”。如果角色缺失或关键偏好无法可靠归类，Agent 可以先读取当前状态再追问。
 
 LLM 不自己计算遗器分数，也不重新实现候选排序。完整链路是：
@@ -200,6 +206,7 @@ cargo test --manifest-path hsr-relic-web/Cargo.toml --test agent_e2e -- --ignore
 - Web 与 CLI 共用同一个 core；
 - LLM Tool 调用、模型配置、真实 Token usage、费用和 Token Budget；
 - LLM 提取目标、材料压力、风险倾向和培养目标，Rust 以三种有限策略确定性计算候选；
+- 多轮 Agent 强化闭环：自然语言观察 → Tool → Rust 状态更新与三态决策 → 继续或重新推荐；
 - SSE 实时 Agent Trace，以及可向模型请求和 Fribbels 子进程传播的取消；
 - 多轮模型上下文、历史任务浏览和版本化 Session JSON 保存/加载。
 - Reliquary Archiver v4 原始 JSON 上传、结构化校验、装备关系转换和事务式会话替换；
@@ -208,6 +215,7 @@ cargo test --manifest-path hsr-relic-web/Cargo.toml --test agent_e2e -- --ignore
 仍未实现：
 
 - 完整角色技能、完整队伍 DPS 或最终概率模型；
+- 通用 Planner、自动读取游戏内强化结果或任意自然语言数值推断；
 - 公网部署所需的认证、TLS 和密钥管理。
 
 旧版 Blade / Seele 的当前伤害指标只是 Fribbels 中的简化普通攻击参考，不能视为完整实战收益。当前强化步数和阈值仍是课堂 Demo 假设。

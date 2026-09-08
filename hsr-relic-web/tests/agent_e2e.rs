@@ -47,8 +47,10 @@ fn scripted_model() -> (String, thread::JoinHandle<Vec<Value>>) {
         json!({"id":"agent-1","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"set_cultivation_intent","arguments":"{\"character\":\"Blade\",\"material_pressure\":\"tight\",\"risk_tolerance\":\"conservative\",\"objective\":\"immediate_power\"}"}}]}}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}),
         json!({"id":"agent-2","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-2","type":"function","function":{"name":"get_next_relic_recommendation","arguments":"{}"}}]}}],"usage":{"prompt_tokens":150,"completion_tokens":25,"total_tokens":175}}),
         json!({"id":"agent-3","choices":[{"message":{"role":"assistant","content":"为 Blade 推荐遗器 #9200003。数值来自 Fribbels，排序来自 Rust Decision Engine。"}}],"usage":{"prompt_tokens":200,"completion_tokens":30,"total_tokens":230}}),
-        json!({"id":"agent-4","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-4","type":"function","function":{"name":"get_current_state","arguments":"{}"}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}),
-        json!({"id":"agent-5","choices":[{"message":{"role":"assistant","content":"已从加载的上下文继续，会话目标仍是 Blade。"}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}),
+        json!({"id":"agent-4","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-4","type":"function","function":{"name":"record_upgrade_result","arguments":"{\"expected_level\":6,\"resulting_level\":9,\"stat\":\"hp_percent\",\"increase\":4.32}"}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}),
+        json!({"id":"agent-5","choices":[{"message":{"role":"assistant","content":"Rust 判断为 Continue，请继续观察下一次强化。"}}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}),
+        json!({"id":"agent-6","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-6","type":"function","function":{"name":"get_current_state","arguments":"{}"}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}),
+        json!({"id":"agent-7","choices":[{"message":{"role":"assistant","content":"已从加载的上下文继续，会话目标仍是 Blade。"}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}),
     ];
     let handle = thread::spawn(move || {
         let mut requests = vec![];
@@ -141,11 +143,46 @@ async fn scripted_model_calls_tools_real_fribbels_and_budget_blocks_next_call() 
             .any(|event| event["type"] == "cultivation_intent_resolved"
                 && event["strategy"] == "conservative")
     );
+    let (status, state) = request(
+        &app,
+        "POST",
+        "/api/agent",
+        token,
+        json!({"expected_revision":state["revision"],
+            "input":"刚才那件从 +6 升到 +9，生命百分比增加了 4.32"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{state}");
+    let upgraded = state["inventory"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|relic| relic["id"] == "9200003")
+        .unwrap();
+    assert_eq!(upgraded["level"], 9);
+    assert_eq!(upgraded["substats"]["hp_percent"], 12.96);
+    assert_eq!(state["remaining_budget"], 7);
+    assert_eq!(state["history"].as_array().unwrap().len(), 1);
+    assert_eq!(state["history"][0]["decision"], "Continue");
+    assert_eq!(state["last_result"]["relic_id"], "9200003");
+    assert_eq!(
+        state["last_result"]["decision"],
+        state["history"][0]["decision"]
+    );
+    assert!(
+        state["last_agent"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["type"] == "decision_recorded"
+                && event["tool_name"] == "record_upgrade_result")
+    );
+    assert_eq!(state["usage"]["summary"]["total_tokens"], 549);
     let (status, saved) = request(&app, "GET", "/api/session/export", token, Value::Null).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(saved["schema_version"], 1);
-    assert_eq!(saved["conversation"].as_array().unwrap().len(), 7);
-    assert_eq!(saved["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(saved["conversation"].as_array().unwrap().len(), 11);
+    assert_eq!(saved["tasks"].as_array().unwrap().len(), 2);
     assert!(!saved.to_string().contains("wire-secret"));
     let (_, fresh) = request(&app, "POST", "/api/session", "", Value::Null).await;
     let restored_token = fresh["session"].as_str().unwrap();
@@ -159,9 +196,9 @@ async fn scripted_model_calls_tools_real_fribbels_and_budget_blocks_next_call() 
     .await;
     assert_eq!(status, StatusCode::OK, "{restored}");
     assert_eq!(restored["target_id"], "1205");
-    assert_eq!(restored["usage"]["summary"]["total_tokens"], 525);
+    assert_eq!(restored["usage"]["summary"]["total_tokens"], 549);
     let (_, restored_tasks) = request(&app, "GET", "/api/tasks", restored_token, Value::Null).await;
-    assert_eq!(restored_tasks["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(restored_tasks["tasks"].as_array().unwrap().len(), 2);
     let (status, continued) = request(
         &app,
         "POST",
@@ -180,24 +217,28 @@ async fn scripted_model_calls_tools_real_fribbels_and_budget_blocks_next_call() 
     );
     let (_, continued_tasks) =
         request(&app, "GET", "/api/tasks", restored_token, Value::Null).await;
-    assert_eq!(continued_tasks["tasks"].as_array().unwrap().len(), 2);
+    assert_eq!(continued_tasks["tasks"].as_array().unwrap().len(), 3);
     let requests = model_server.join().unwrap();
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 7);
     assert_eq!(requests[0]["tool_choice"], "required");
     assert_eq!(
         requests[1]["messages"].as_array().unwrap().last().unwrap()["role"],
         "tool"
     );
-    assert!(requests[3]["messages"].as_array().unwrap().len() > 7);
+    assert_eq!(
+        requests[4]["messages"].as_array().unwrap().last().unwrap()["role"],
+        "tool"
+    );
+    assert!(requests[5]["messages"].as_array().unwrap().len() > 11);
 
     let (status, limited) = request(
         &app,
         "POST",
         "/api/model-config",
         token,
-        json!({"expected_revision":2,"endpoint":endpoint,"api_key":null,"clear_api_key":false,
+        json!({"expected_revision":3,"endpoint":endpoint,"api_key":null,"clear_api_key":false,
             "model":"scripted-model","context_length":2048,"reasoning_mode":"disabled",
-            "input_price_per_million":2.0,"output_price_per_million":8.0,"token_budget":525}),
+            "input_price_per_million":2.0,"output_price_per_million":8.0,"token_budget":549}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

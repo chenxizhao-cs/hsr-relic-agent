@@ -130,7 +130,10 @@ function eventHtml(event) {
   if (event.type === 'model_response_received') return `<div><b>响应</b><span>${esc(event.response_id)} · ${event.tool_call_count} 个 Tool Call${event.has_text ? ' · 含文本' : ''}</span></div>`
   if (event.type === 'usage_recorded') return `<div><b>Usage</b><span>输入 ${number(event.call.input_tokens)} · 输出 ${number(event.call.output_tokens)} · 本次费用 ${Number(event.call.cost).toFixed(6)}</span></div>`
   if (event.type === 'tool_requested') return `<div><b>Tool</b><span>${esc(event.name)}</span><code>${esc(JSON.stringify(event.arguments))}</code></div>`
-  if (event.type === 'tool_progress') return `<div><b>进度</b><span>${event.stage === 'reading_state' ? '正在读取状态' : '正在等待 Rust Core / Fribbels 评价'} · ${esc(event.name)}</span></div>`
+  if (event.type === 'tool_progress') {
+    const stage = { reading_state: '正在读取状态', recording_upgrade: '正在校验并记录强化结果', evaluating_relics: '正在等待 Rust Core / Fribbels 评价' }[event.stage] ?? event.stage
+    return `<div><b>进度</b><span>${esc(stage)} · ${esc(event.name)}</span></div>`
+  }
   if (event.type === 'tool_finished') return `<div><b>结果</b><span>${esc(event.name)}</span><details><summary>结构化输出</summary><pre>${esc(JSON.stringify(event.result, null, 2))}</pre></details></div>`
   if (event.type === 'cultivation_intent_resolved') {
     const p = event.intent.preferences
@@ -140,7 +143,10 @@ function eventHtml(event) {
     const strategy = { conservative: '保守', balanced: '均衡', high_potential: '高潜力' }[event.strategy] ?? event.strategy
     return `<div><b>培养意图</b><span>角色 ${esc(event.intent.character_id)} · 材料${esc(material)} · 风险${esc(risk)} · 目标${esc(objective)} → Rust ${esc(strategy)}策略</span><details><summary>结构化意图</summary><pre>${esc(JSON.stringify(event.intent, null, 2))}</pre></details></div>`
   }
-  if (event.type === 'decision_recorded') return `<div><b>决策</b><span>Rust Decision Engine 已返回 ${esc(event.tool_name)}</span><details><summary>查看决策数据</summary><pre>${esc(JSON.stringify(event.result, null, 2))}</pre></details></div>`
+  if (event.type === 'decision_recorded') {
+    const label = event.tool_name === 'record_upgrade_result' ? 'Rust 已更新遗器、预算和历史，并返回强化决策' : `Rust Decision Engine 已返回 ${event.tool_name}`
+    return `<div><b>决策</b><span>${esc(label)}</span><details><summary>查看决策数据</summary><pre>${esc(JSON.stringify(event.result, null, 2))}</pre></details></div>`
+  }
   if (event.type === 'budget_blocked') return `<div><b>预算</b><span>达到 ${number(event.used_tokens)} / ${number(event.token_budget)}，停止新请求</span></div>`
   if (event.type === 'assistant_reply') return '<div><b>回复</b><span>模型基于工具结果完成解释</span></div>'
   if (event.type === 'run_finished') return `<div><b>结束</b><span>${statusLabel(event.status)}</span></div>`
@@ -168,7 +174,11 @@ function progressFor(event) {
   if (event.type === 'run_started') return '正在理解用户目标'
   if (event.type === 'model_request_started') return `正在等待模型第 ${event.call_index} 次响应`
   if (event.type === 'tool_requested') return `正在调用 ${event.name}`
-  if (event.type === 'tool_progress') return event.stage === 'reading_state' ? `正在读取状态 · ${event.name}` : `正在等待 Fribbels 评价 · ${event.name}`
+  if (event.type === 'tool_progress') {
+    if (event.stage === 'reading_state') return `正在读取状态 · ${event.name}`
+    if (event.stage === 'recording_upgrade') return `正在记录强化结果 · ${event.name}`
+    return `正在等待 Fribbels 评价 · ${event.name}`
+  }
   if (event.type === 'tool_finished') return `工具执行完成 · ${event.name}`
   if (event.type === 'cultivation_intent_resolved') return `已采用 ${event.strategy} 策略，正在计算候选`
   if (event.type === 'assistant_reply') return '正在生成最终回复'

@@ -181,8 +181,8 @@ Existing DecisionEngine → Evaluator → Fribbels Adapter
 ```
 
 - Agent 的首次模型请求强制要求 Tool call；只有至少完成一次 Tool 调用后才接受最终自然语言回复，最多六轮，避免无界循环。
-- Tool 层提供设置结构化培养意图、查询状态、候选排序、下一件推荐和强化历史；其职责只是参数转换、Rust 枚举校验和结构化返回。
-- Agent 在 `DecisionEngine` 副本上执行，完整成功后才提交。模型或工具链错误不会留下半完成的账号状态；已经收到的真实 usage 仍然记账。
+- Tool 层提供设置结构化培养意图、查询状态、候选排序、下一件推荐、强化结果录入和强化历史；其职责只是参数转换、Rust 枚举校验和结构化返回。
+- Agent 在 `DecisionEngine` 副本上执行。每个成功改变状态的 Tool 都形成提交检查点；未完成的 core 操作仍保持事务回滚。这样玩家已经发生并成功校验的强化观察不会因为后续模型解释失败而消失；已经收到的真实 usage 也始终记账。
 - `ModelConfig` 支持 Endpoint、API Key、Model、Context Length、Reasoning Mode、输入/输出价格和 Token Budget，可由环境变量初始化，也可在 Web 会话内修改。
 - Provider 当前适配 OpenAI-compatible Chat Completions function tools。Context Length 作为请求的 `max_completion_tokens` 上限；多轮完整历史会继续传入，未来仍需补充按不同模型窗口裁剪或摘要的请求策略。
 - `UsageLedger` 逐次记录响应 ID、模型、input/output/total tokens、时间和按配置价格计算的费用。累计 tokens 达到 budget 后，在下一次模型请求发出前终止；已经完成的确定性工具结果仍可返回。
@@ -202,7 +202,24 @@ Rust 将偏好确定性映射为三种策略：
 
 `DecisionEngine` 仍独占候选合法性、公式计算、排序和 `Continue / Hold / Stop`。策略会改变候选 priority，也会间接进入强化后“其他候选高出当前 25%”的确定性比较；LLM 不能提供任意权重、阈值或三态结果。Trace 中的 `cultivation_intent_resolved` 来自 Tool 成功后 Rust 已校验的 `CultivationGoal`，不是直接回显模型参数。
 
-当前没有强化结果录入 Tool，也没有通用 Planner。不同策略下，已有按 `(角色, 遗器)` 保存的 Hold/Stop 状态仍然共用，不会因策略切换自动清除。
+### 完整强化 Agent Loop
+
+`record_upgrade_result` 接收可选遗器 ID、强化前后等级、副属性类型和精确增量。遗器 ID 省略时只使用 Rust 当前选中项；Rust 明确检查前后必须恰好相差 3，Tool 不推测遗器、等级或 roll 数值，最终进入与 Web 手动表单相同的 core observation 入口和 `DecisionEngine::apply_upgrade`。该 core 方法负责检查选择、当前等级、三/四副属性规则、预算、历史和 Evaluator，再更新同一件遗器并返回 Continue / Hold / Stop、原因及下一候选。
+
+```text
+User observation
+  → record_upgrade_result Tool Call
+  → DecisionEngine::apply_upgrade_observation → apply_upgrade
+  → AccountState / budget / history update
+  → Continue / Hold / Stop Tool Result
+  → LLM waits, inspects candidates, or requests the next recommendation
+```
+
+生命、攻击、防御没有区分固定值/百分比，或没有精确增量时，模型先调用 `get_current_state` 获取当前选中遗器和等级，再追问用户，不得提交猜测值。`get_next_relic_recommendation` 的 `exclude_selected=true` 只处理用户明确提出的“换下一件”；它选择 Rust 排序中的最佳其他候选，不伪造 Hold/Stop，也不永久排除原遗器。
+
+Trace 复用真实的 `ToolRequested / ToolProgress / ToolFinished / DecisionRecorded`：强化 Tool 的结果已经包含实际 observation、状态更新、三态决策和下一候选，后续模型再次调用候选/推荐 Tool 就是可见的 replan，不添加没有执行行为的规划事件。
+
+当前仍没有通用 Planner。不同策略下，已有按 `(角色, 遗器)` 保存的 Hold/Stop 状态仍然共用，不会因策略切换自动清除；用户只说“换一件”时对当前遗器的排除也只作用于这次选择。
 
 ### R4 / R5：实时 Trace 与上下文历史（已实现）
 
@@ -240,7 +257,7 @@ R4/R5 当前是课堂 Demo 实现：进程内最多保留 64 个会话，持久�
 
 1. 如何明确角色技能版本、补全实际配装与行迹，使 Build 伤害指标更有代表性。
 2. 如何用对照数据校准真实评分、Build 改善与成本在排序和决策中的作用。
-3. 接入真实账号后，为可靠更新状态还需哪些输入与校验。
+3. 如何覆盖 Reliquary 当前跳过的中间强化等级，并进一步校验真实 roll 档位与材料消耗。
 4. 多轮历史增长后，如何在保留完整存档的同时按不同模型上下文窗口生成安全的请求视图。
 
 自有评价 JSON v1、结构化结果及外部失败回滚已在 v0.2 实现；v0.3 在其上增加独立 Provider、Tool 与 usage ledger，当前 R4/R5 再将 Agent Event 用作实时 Trace 和版本化会话历史。后续继续以现有单目标闭环为基础迭代。

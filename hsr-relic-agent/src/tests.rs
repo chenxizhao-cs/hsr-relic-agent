@@ -343,6 +343,25 @@ fn upgrade_input_failures_return_specific_reasons() {
 }
 
 #[test]
+fn observed_upgrade_must_advance_exactly_three_levels_transactionally() {
+    let mut e = engine(8);
+    e.select_relic("9100002").unwrap();
+    let before_account = e.account().clone();
+    let before_selected = e.selected().unwrap().id.clone();
+
+    assert_eq!(
+        e.apply_upgrade_observation(upgrade("9100002", 3, Stat::CritRate, 3.24), 9,)
+            .unwrap_err(),
+        RelicOperationError::InvalidLevelTransition {
+            from_level: 3,
+            to_level: 9,
+        }
+    );
+    assert_eq!(*e.account(), before_account);
+    assert_eq!(e.selected().unwrap().id, before_selected);
+}
+
+#[test]
 fn overflowing_stat_result_is_rejected_with_specific_reason() {
     let mut account = load_scanner_v4(DEMO_ACCOUNT, 8).unwrap();
     account

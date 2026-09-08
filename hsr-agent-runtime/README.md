@@ -18,7 +18,7 @@ LLM 不获得重新实现评分或排序的职责。系统提示要求它先调�
 |---|---|
 | `src/config.rs` | `ModelConfig`、安全的公开视图、环境变量和 Web patch 校验 |
 | `src/provider.rs` | `ModelProvider` 抽象及可取消的 OpenAI-compatible Chat Completions 实现 |
-| `src/tools.rs` | 五个 Agent Tool、结构化意图校验及对现有 Rust core 的薄封装 |
+| `src/tools.rs` | 六个 Agent Tool、结构化参数校验及对现有 Rust core 的薄封装 |
 | `src/runtime.rs` | 最多六轮的 tool loop、多轮上下文、取消/预算边界和统一 `TraceEvent` |
 | `src/usage.rs` | API 响应 usage 的逐次 ledger、累计与费用计算 |
 
@@ -45,12 +45,15 @@ Context Length 不是对远端模型真实上下文窗口的修改；服务端�
 | `set_cultivation_intent` | 角色、材料压力、风险倾向、培养目标 | 用 Rust 闭集枚举校验意图，选择保守/均衡/高潜力策略 |
 | `get_current_state` | 无 | 角色、当前目标/选择、剩余强化步数、历史数量 |
 | `get_relic_candidates` | 可选 `limit` | Rust 排序后的候选及 Evaluator 结构化指标；不改变选择 |
-| `get_next_relic_recommendation` | 无 | 由 Rust 推荐并选中下一件遗器 |
+| `get_next_relic_recommendation` | 可选 `exclude_selected` | 由 Rust 推荐并选中下一件；明确换件时可排除当前项一次 |
+| `record_upgrade_result` | 可选遗器 ID、强化前后等级、属性、精确增量 | 校验必须恰好 +3 后调用 `DecisionEngine::apply_upgrade`，返回状态更新、Continue/Hold/Stop 和下一候选 |
 | `get_upgrade_history` | 无 | 已接受的强化观察及 Continue / Hold / Stop |
 
-`CoreTools` 不包含评分阈值、候选排序或三态决策算法。一次 Agent run 在 `DecisionEngine` 副本上工作；正常完成和预算在 Tool 后达到时提交。用户取消时，取消前已经完成的 Tool 状态也会保留；正在执行但未完成的 core 操作仍由原有事务边界回滚。
+`CoreTools` 不包含评分阈值、候选排序或三态决策算法。一次 Agent run 在 `DecisionEngine` 副本上工作；成功的 mutation Tool 形成状态检查点，之后即使解释模型失败，已经确认的真实强化观察也不会回滚。用户取消时同样保留取消前完成的 Tool；正在执行但未完成的 core 操作仍由原有事务边界回滚。
 
 LLM 只提交受控意图，不能提交评分、priority、阈值或 `Continue / Hold / Stop`。Runtime 在 Tool 成功后从 Rust `DecisionEngine` 读取已校验的意图和实际策略，生成 `cultivation_intent_resolved` Trace 事件。缺少角色或关键偏好冲突时，模型可以先调用 `get_current_state`，再用自然语言追问；没有表达偏好时回退到均衡默认。
+
+强化反馈必须包含可以确定副属性类型和精确增量的信息。`get_current_state` 返回当前选中遗器的等级、副属性和最近一次观察，帮助模型解析“刚才那件”；无法区分固定/百分比或缺少数值时只允许追问。强化 Tool Result 包含 observation、剩余预算、历史数量、Rust 三态结果和下一候选，模型据此继续、查询候选或停止，不自行重算。
 
 ## Usage、费用和预算
 
@@ -70,7 +73,7 @@ cargo test --offline --manifest-path hsr-agent-runtime/Cargo.toml
 cargo clippy --offline --manifest-path hsr-agent-runtime/Cargo.toml --all-targets -- -D warnings
 ```
 
-测试覆盖配置密钥不泄露、协议请求与真实 usage 解析、费用、五个 Tool、完整 tool loop、事务提交和请求前预算阻断。Provider 的本地 HTTP 测试需要操作系统允许绑定回环端口。
+测试覆盖配置密钥不泄露、协议请求与真实 usage 解析、费用、六个 Tool、自然语言多轮强化闭环、歧义追问、三态/预算/非法输入、Tool 检查点和请求前预算阻断。Provider 的本地 HTTP 测试需要操作系统允许绑定回环端口。
 
 ## R4 / R5 公共结构
 

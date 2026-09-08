@@ -12,8 +12,9 @@ use axum::{
 };
 use futures_util::{Stream, stream};
 use hsr_agent_runtime::{
-    AgentRun, AgentRunContext, AgentRuntime, ChatMessage, ModelConfig, ModelConfigPatch,
-    ModelConfigView, OpenAiCompatibleProvider, RuntimeError, TraceEvent, UsageLedger,
+    AgentEvent, AgentRun, AgentRunContext, AgentRuntime, ChatMessage, ModelConfig,
+    ModelConfigPatch, ModelConfigView, OpenAiCompatibleProvider, RuntimeError, TraceEvent,
+    UsageLedger,
 };
 use hsr_relic_agent::*;
 use serde::{Deserialize, Serialize};
@@ -550,12 +551,15 @@ fn execute(s: &Session, command: Command) -> ApiResult<Value> {
             stat,
             increase,
         } => {
-            let result = staged.engine.apply_upgrade(UpgradeResult {
-                relic_id: relic_id.clone(),
-                expected_level,
-                stat,
-                increase,
-            })?;
+            let result = staged.engine.apply_upgrade_observation(
+                UpgradeResult {
+                    relic_id: relic_id.clone(),
+                    expected_level,
+                    stat,
+                    increase,
+                },
+                expected_level.saturating_add(3),
+            )?;
             staged.last_result = Some(
                 json!({"relic_id":relic_id, "decision":dto::decision(result.decision),
                 "reason":result.reason,"details":result.details,"next_relic_id":result.next.as_ref().map(|r| &r.relic_id)}),
@@ -705,17 +709,13 @@ fn execute_agent(session: &Session, command: AgentCommand) -> ApiResult<Value> {
     );
     data.conversation = conversation;
     let (run, error) = match result {
-        Ok(run) => {
-            data.engine = engine;
-            (run, None)
-        }
-        Err(failure) => {
-            if matches!(failure.error, RuntimeError::Cancelled) {
-                data.engine = engine;
-            }
-            (*failure.run, Some(failure.error))
-        }
+        Ok(run) => (run, None),
+        Err(failure) => (*failure.run, Some(failure.error)),
     };
+    data.engine = engine;
+    if let Some(last_result) = agent_upgrade_result(&run) {
+        data.last_result = Some(last_result);
+    }
     data.last_agent = Some(run.clone());
     session.traces.lock().unwrap().push(run);
     *session.active_trace.lock().unwrap() = None;
@@ -726,6 +726,25 @@ fn execute_agent(session: &Session, command: AgentCommand) -> ApiResult<Value> {
         return Err(agent_error(error));
     }
     Ok(snapshot)
+}
+
+fn agent_upgrade_result(run: &AgentRun) -> Option<Value> {
+    run.events.iter().rev().find_map(|event| {
+        let AgentEvent::DecisionRecorded { tool_name, result } = &event.event else {
+            return None;
+        };
+        if tool_name != "record_upgrade_result" || result["ok"] != Value::Bool(true) {
+            return None;
+        }
+        let recorded = &result["result"];
+        Some(json!({
+            "relic_id":recorded["observation"]["relic_id"],
+            "decision":recorded["decision"],
+            "reason":recorded["reason"],
+            "details":recorded["details"],
+            "next_relic_id":recorded["next_recommendation"]["relic_id"]
+        }))
+    })
 }
 
 fn stale_revision() -> ApiError {

@@ -92,6 +92,10 @@ fn operation_message(error: &RelicOperationError) -> String {
         } => format!(
             "遗器 {relic_id} 当前是 +{current_level}，收到的结果基于 +{reported_level}；已拒绝这条过期或重复结果。"
         ),
+        RelicOperationError::InvalidLevelTransition {
+            from_level,
+            to_level,
+        } => format!("不能把一次强化记录为 +{from_level} → +{to_level}；每次只能增加 3 级。"),
         RelicOperationError::InvalidIncrease => "强化增量必须是大于 0 的有限数值。".into(),
         RelicOperationError::InvalidSubstat { stat } => {
             format!("{stat:?} 不是可录入的遗器副属性。")
@@ -256,12 +260,15 @@ fn observe(engine: &mut Engine, stat: Stat, increase: f64) -> CliResult<()> {
         .ok_or(RelicOperationError::NoRelicSelected)?;
     let id = selected.id.clone();
     let old_level = selected.level;
-    let out = engine.apply_upgrade(UpgradeResult {
-        relic_id: id.clone(),
-        expected_level: old_level,
-        stat,
-        increase,
-    })?;
+    let out = engine.apply_upgrade_observation(
+        UpgradeResult {
+            relic_id: id.clone(),
+            expected_level: old_level,
+            stat,
+            increase,
+        },
+        old_level.saturating_add(3),
+    )?;
     let updated = &engine.account().relics[&id];
     println!(
         "\n已更新同一遗器 {id}：+{old_level} → +{}，{stat:?} 增加 {increase}，现值 {}；剩余 {} 步。",

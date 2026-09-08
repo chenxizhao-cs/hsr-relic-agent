@@ -16,8 +16,11 @@ const SYSTEM_PROMPT: &str = r#"你是《崩坏：星穹铁道》单目标角色�
 推荐前必须调用 set_cultivation_intent：材料宽松/一般/紧张映射为 relaxed/normal/tight；风险保守/均衡/愿意赌映射为 conservative/balanced/aggressive；快速提升当前战力/平衡/追求极品满级上限映射为 immediate_power/balanced/max_potential。用户没有表达某项偏好时分别使用 normal、balanced、balanced。
 如果目标角色缺失，或用户表达的关键偏好互相冲突而无法可靠归类，先调用 get_current_state 读取已有状态，再用一个简短问题追问，不要猜测。
 设置意图后调用 get_next_relic_recommendation。Rust 会校验意图并选择有限策略；不得添加评分权重、阈值、priority、decision 等工具参数。
+用户报告已经发生的强化时，使用 record_upgrade_result。relic_id 可省略并使用当前选中遗器；expected_level 和 resulting_level 分别是强化前后等级，必须恰好相差 3。只有明确知道副属性类别和精确增加量时才能记录：生命、攻击、防御必须区分固定值和百分比，不能根据“歪了”“出了一次”等措辞猜数值。信息不足时先调用 get_current_state，再追问缺失字段，绝不能重复记录同一次观察。
+record_upgrade_result 的 Continue/Hold/Stop、reason、预算、历史和 next_recommendation 均来自 Rust。Continue 时解释后等待下一次强化；Hold 时可调用 get_relic_candidates 查看其他候选；Stop 时根据返回的下一候选继续；预算耗尽时停止请求强化。若用户没有报告新强化、只是明确说换下一件或先不升当前遗器，调用 get_next_relic_recommendation 并设 exclude_selected=true；不要伪造强化或三态。
+用户中途明确修改培养偏好时，可以再次调用 set_cultivation_intent；否则沿用 get_current_state 中已有的 CultivationGoal。
 必须通过工具读取账号状态和推荐；不要自行计算、编造或覆盖遗器评分、候选排序、Build 数值、Continue/Hold/Stop。
-最终用简洁中文回答，指出采用的 Rust 策略、推荐遗器 ID、部位、当前分、平均满级潜力和工具返回的推荐原因；说明数值来自 Evaluator，排序和决策来自 Rust Decision Engine。"#;
+最终用简洁中文回答。推荐任务说明 Rust 策略、推荐遗器和工具理由；强化反馈说明 Rust 返回的 Continue/Hold/Stop、预算变化和下一步。数值来自 Evaluator，排序、状态更新和三态决策来自 Rust Decision Engine。"#;
 
 static RUN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -36,6 +39,7 @@ pub enum AgentRunStatus {
 pub enum ToolProgressStage {
     ReadingState,
     EvaluatingRelics,
+    RecordingUpgrade,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -364,10 +368,11 @@ impl<P: ModelProvider> AgentRuntime<P> {
                     name: call.name.clone(),
                     stage: tool_stage(&call.name),
                 });
-                let result = match CoreTools::new(&mut staged).execute(&call.name, &call.arguments)
-                {
+                let execution = CoreTools::new(&mut staged).execute(&call.name, &call.arguments);
+                let tool_succeeded = execution.is_ok();
+                let result = match execution {
                     Ok(value) => serde_json::json!({"ok":true,"result":value}),
-                    Err(message) => serde_json::json!({"ok":false,"error":message}),
+                    Err(error) => serde_json::json!({"ok":false,"error":error}),
                 };
                 trace.event(AgentEvent::ToolFinished {
                     call_id: call.id.clone(),
@@ -387,12 +392,17 @@ impl<P: ModelProvider> AgentRuntime<P> {
                 }
                 if matches!(
                     call.name.as_str(),
-                    "get_relic_candidates" | "get_next_relic_recommendation"
+                    "get_relic_candidates"
+                        | "get_next_relic_recommendation"
+                        | "record_upgrade_result"
                 ) {
                     trace.event(AgentEvent::DecisionRecorded {
                         tool_name: call.name.clone(),
                         result: result.clone(),
                     });
+                }
+                if tool_succeeded && tool_commits_state(&call.name) {
+                    *engine = staged.clone();
                 }
                 history.push(ChatMessage::Tool {
                     call_id: call.id,
@@ -430,11 +440,21 @@ impl<P: ModelProvider> AgentRuntime<P> {
 }
 
 fn tool_stage(name: &str) -> ToolProgressStage {
-    if matches!(name, "get_current_state" | "get_upgrade_history") {
-        ToolProgressStage::ReadingState
-    } else {
-        ToolProgressStage::EvaluatingRelics
+    match name {
+        "get_current_state" | "get_upgrade_history" => ToolProgressStage::ReadingState,
+        "record_upgrade_result" => ToolProgressStage::RecordingUpgrade,
+        _ => ToolProgressStage::EvaluatingRelics,
     }
+}
+
+fn tool_commits_state(name: &str) -> bool {
+    matches!(
+        name,
+        "set_cultivation_intent"
+            | "set_target_character"
+            | "get_next_relic_recommendation"
+            | "record_upgrade_result"
+    )
 }
 
 fn check_budget(config: &ModelConfig, usage: &UsageLedger) -> Result<(), RuntimeError> {
@@ -526,7 +546,7 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::{ModelResponse, ModelToolCall, TokenUsage};
-    use hsr_relic_agent::{DEMO_ACCOUNT, MockEvaluator, load_scanner_v4};
+    use hsr_relic_agent::{DEMO_ACCOUNT, MockEvaluator, UpgradeDecision, load_scanner_v4};
     use serde_json::json;
     use std::{collections::VecDeque, sync::Mutex};
 
@@ -644,6 +664,379 @@ mod tests {
             AgentEvent::CultivationIntentResolved { intent, strategy }
                 if intent.preferences.material_pressure == hsr_relic_agent::MaterialPressure::Tight
                     && *strategy == CultivationStrategy::Conservative)));
+    }
+
+    #[test]
+    fn full_multi_turn_agent_loop_records_an_observation_and_continues() {
+        let provider = ScriptedProvider {
+            responses: Mutex::new(VecDeque::from([
+                response(
+                    "goal",
+                    None,
+                    vec![call(
+                        "goal-call",
+                        "set_cultivation_intent",
+                        json!({"character":"Blade","material_pressure":"normal",
+                            "risk_tolerance":"balanced","objective":"balanced"}),
+                    )],
+                    10,
+                    2,
+                ),
+                response(
+                    "recommend",
+                    None,
+                    vec![call(
+                        "recommend-call",
+                        "get_next_relic_recommendation",
+                        json!({}),
+                    )],
+                    12,
+                    2,
+                ),
+                response("recommend-reply", Some("先强化 9100002。"), vec![], 14, 3),
+                response(
+                    "observe",
+                    None,
+                    vec![call(
+                        "observe-call",
+                        "record_upgrade_result",
+                        json!({"expected_level":3,"resulting_level":6,
+                            "stat":"crit_rate","increase":3.24}),
+                    )],
+                    16,
+                    2,
+                ),
+                response(
+                    "observe-reply",
+                    Some("Rust 判断为 Continue，请继续观察下一次强化。"),
+                    vec![],
+                    18,
+                    3,
+                ),
+            ])),
+            calls: Mutex::new(0),
+        };
+        let runtime = AgentRuntime::new(provider);
+        let mut engine =
+            DecisionEngine::new(load_scanner_v4(DEMO_ACCOUNT, 8).unwrap(), MockEvaluator);
+        let mut usage = UsageLedger::default();
+        let mut history = vec![];
+        let mut on_update = |_: &AgentRun| {};
+        runtime
+            .run_with_context(
+                "我想培养 Blade，按均衡方式推荐一件",
+                &ModelConfig::default(),
+                AgentRunContext {
+                    usage: &mut usage,
+                    engine: &mut engine,
+                    history: &mut history,
+                    cancelled: &AtomicBool::new(false),
+                    on_update: &mut on_update,
+                },
+            )
+            .unwrap();
+        assert_eq!(engine.selected().unwrap().id, "9100002");
+
+        let run = runtime
+            .run_with_context(
+                "刚才那件从 +3 升到 +6，暴击率增加了 3.24",
+                &ModelConfig::default(),
+                AgentRunContext {
+                    usage: &mut usage,
+                    engine: &mut engine,
+                    history: &mut history,
+                    cancelled: &AtomicBool::new(false),
+                    on_update: &mut on_update,
+                },
+            )
+            .unwrap();
+        let record = engine.account().history.last().unwrap();
+        assert_eq!(record.after.id, "9100002");
+        assert_eq!(record.before.level, 3);
+        assert_eq!(record.after.level, 6);
+        assert_eq!(record.decision, UpgradeDecision::Continue);
+        assert_eq!(engine.account().upgrade_steps, 7);
+        assert_eq!(engine.selected().unwrap().id, "9100002");
+        let decision_event = run.events.iter().find(|event| {
+            matches!(&event.event, AgentEvent::DecisionRecorded { tool_name, result }
+                if tool_name == "record_upgrade_result"
+                    && result["result"]["decision"] == "Continue")
+        });
+        assert!(decision_event.is_some());
+    }
+
+    #[test]
+    fn ambiguous_upgrade_feedback_is_clarified_without_mutation() {
+        let provider = ScriptedProvider {
+            responses: Mutex::new(VecDeque::from([
+                response(
+                    "inspect",
+                    None,
+                    vec![call("state", "get_current_state", json!({}))],
+                    4,
+                    1,
+                ),
+                response(
+                    "question",
+                    Some("是固定防御还是防御百分比？精确增加了多少？"),
+                    vec![],
+                    5,
+                    2,
+                ),
+            ])),
+            calls: Mutex::new(0),
+        };
+        let runtime = AgentRuntime::new(provider);
+        let mut engine =
+            DecisionEngine::new(load_scanner_v4(DEMO_ACCOUNT, 8).unwrap(), MockEvaluator);
+        engine.set_goal("1205").unwrap();
+        engine.recommend_next().unwrap();
+        let before = engine.account().clone();
+        let mut usage = UsageLedger::default();
+        let mut history = vec![];
+        let mut on_update = |_: &AgentRun| {};
+        let run = runtime
+            .run_with_context(
+                "刚才那件 +3 出了防御",
+                &ModelConfig::default(),
+                AgentRunContext {
+                    usage: &mut usage,
+                    engine: &mut engine,
+                    history: &mut history,
+                    cancelled: &AtomicBool::new(false),
+                    on_update: &mut on_update,
+                },
+            )
+            .unwrap();
+        assert_eq!(*engine.account(), before);
+        assert!(run.reply.unwrap().contains("精确增加"));
+        assert!(!run.events.iter().any(|event| {
+            matches!(&event.event, AgentEvent::ToolRequested { name, .. }
+                if name == "record_upgrade_result")
+        }));
+    }
+
+    #[test]
+    fn hold_observation_is_followed_by_a_real_candidate_query() {
+        let provider = ScriptedProvider {
+            responses: Mutex::new(VecDeque::from([
+                response(
+                    "hold",
+                    None,
+                    vec![call(
+                        "hold-call",
+                        "record_upgrade_result",
+                        json!({"expected_level":0,"resulting_level":3,
+                            "stat":"def_percent","increase":5.4}),
+                    )],
+                    5,
+                    1,
+                ),
+                response(
+                    "compare",
+                    None,
+                    vec![call(
+                        "candidate-call",
+                        "get_relic_candidates",
+                        json!({"limit":3}),
+                    )],
+                    6,
+                    1,
+                ),
+                response(
+                    "reply",
+                    Some("Rust 已 Hold 当前遗器，我比较了其他候选。"),
+                    vec![],
+                    7,
+                    2,
+                ),
+            ])),
+            calls: Mutex::new(0),
+        };
+        let runtime = AgentRuntime::new(provider);
+        let mut engine =
+            DecisionEngine::new(load_scanner_v4(DEMO_ACCOUNT, 8).unwrap(), MockEvaluator);
+        engine.set_goal("1205").unwrap();
+        engine.select_relic("9100001").unwrap();
+        let mut usage = UsageLedger::default();
+        let mut history = vec![];
+        let mut on_update = |_: &AgentRun| {};
+        let run = runtime
+            .run_with_context(
+                "9100001 从 +0 到 +3，防御百分比增加 5.4",
+                &ModelConfig::default(),
+                AgentRunContext {
+                    usage: &mut usage,
+                    engine: &mut engine,
+                    history: &mut history,
+                    cancelled: &AtomicBool::new(false),
+                    on_update: &mut on_update,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            engine.account().history.last().unwrap().decision,
+            UpgradeDecision::Hold
+        );
+        let hold_index = run
+            .events
+            .iter()
+            .position(|event| {
+                matches!(&event.event,
+                AgentEvent::DecisionRecorded { tool_name, result }
+                    if tool_name == "record_upgrade_result"
+                        && result["result"]["decision"] == "Hold")
+            })
+            .unwrap();
+        let candidates_index = run
+            .events
+            .iter()
+            .position(|event| {
+                matches!(&event.event,
+                AgentEvent::ToolRequested { name, .. }
+                    if name == "get_relic_candidates")
+            })
+            .unwrap();
+        assert!(hold_index < candidates_index);
+    }
+
+    #[test]
+    fn stop_observation_is_followed_by_a_real_replan_tool_call() {
+        let provider = ScriptedProvider {
+            responses: Mutex::new(VecDeque::from([
+                response(
+                    "stop",
+                    None,
+                    vec![call(
+                        "stop-call",
+                        "record_upgrade_result",
+                        json!({"expected_level":6,"resulting_level":9,
+                            "stat":"def_percent","increase":5.4}),
+                    )],
+                    5,
+                    1,
+                ),
+                response(
+                    "replan",
+                    None,
+                    vec![call(
+                        "replan-call",
+                        "get_next_relic_recommendation",
+                        json!({}),
+                    )],
+                    6,
+                    1,
+                ),
+                response(
+                    "reply",
+                    Some("Rust 已 Stop 当前遗器，并切换到下一候选。"),
+                    vec![],
+                    7,
+                    2,
+                ),
+            ])),
+            calls: Mutex::new(0),
+        };
+        let runtime = AgentRuntime::new(provider);
+        let mut engine =
+            DecisionEngine::new(load_scanner_v4(DEMO_ACCOUNT, 8).unwrap(), MockEvaluator);
+        engine.set_goal("1205").unwrap();
+        engine.select_relic("9100003").unwrap();
+        let mut usage = UsageLedger::default();
+        let mut history = vec![];
+        let mut on_update = |_: &AgentRun| {};
+        let run = runtime
+            .run_with_context(
+                "9100003 从 +6 到 +9，防御百分比增加 5.4",
+                &ModelConfig::default(),
+                AgentRunContext {
+                    usage: &mut usage,
+                    engine: &mut engine,
+                    history: &mut history,
+                    cancelled: &AtomicBool::new(false),
+                    on_update: &mut on_update,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            engine.account().history.last().unwrap().decision,
+            UpgradeDecision::Stop
+        );
+        assert_ne!(engine.selected().unwrap().id, "9100003");
+        let record_index = run
+            .events
+            .iter()
+            .position(|event| {
+                matches!(&event.event,
+                AgentEvent::DecisionRecorded { tool_name, .. }
+                    if tool_name == "record_upgrade_result")
+            })
+            .unwrap();
+        let replan_index = run
+            .events
+            .iter()
+            .position(|event| {
+                matches!(&event.event,
+                AgentEvent::ToolRequested { name, .. }
+                    if name == "get_next_relic_recommendation")
+            })
+            .unwrap();
+        assert!(record_index < replan_index);
+    }
+
+    #[test]
+    fn completed_upgrade_tool_is_a_state_checkpoint_if_later_model_call_fails() {
+        struct FailsAfterObservation(AtomicU64);
+        impl ModelProvider for FailsAfterObservation {
+            fn complete(
+                &self,
+                _: &ModelConfig,
+                _: &ProviderRequest,
+                _: &AtomicBool,
+            ) -> Result<ModelResponse, ProviderError> {
+                if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Ok(response(
+                        "observed",
+                        None,
+                        vec![call(
+                            "observation",
+                            "record_upgrade_result",
+                            json!({"expected_level":3,"resulting_level":6,
+                                "stat":"crit_rate","increase":3.24}),
+                        )],
+                        4,
+                        1,
+                    ))
+                } else {
+                    Err(ProviderError::RequestFailed("测试中的后续解释失败".into()))
+                }
+            }
+        }
+        let runtime = AgentRuntime::new(FailsAfterObservation(AtomicU64::new(0)));
+        let mut engine =
+            DecisionEngine::new(load_scanner_v4(DEMO_ACCOUNT, 8).unwrap(), MockEvaluator);
+        engine.set_goal("1205").unwrap();
+        engine.recommend_next().unwrap();
+        let mut usage = UsageLedger::default();
+        let mut history = vec![];
+        let mut on_update = |_: &AgentRun| {};
+        let failure = runtime
+            .run_with_context(
+                "刚才那件暴击率增加 3.24",
+                &ModelConfig::default(),
+                AgentRunContext {
+                    usage: &mut usage,
+                    engine: &mut engine,
+                    history: &mut history,
+                    cancelled: &AtomicBool::new(false),
+                    on_update: &mut on_update,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(failure.error, RuntimeError::Provider(_)));
+        assert_eq!(engine.account().history.len(), 1);
+        assert_eq!(engine.account().relics["9100002"].level, 6);
+        assert_eq!(engine.account().upgrade_steps, 7);
     }
 
     #[test]

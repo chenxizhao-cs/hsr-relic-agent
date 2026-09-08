@@ -47,6 +47,10 @@ pub enum RelicOperationError {
         reported_level: u8,
         current_level: u8,
     },
+    InvalidLevelTransition {
+        from_level: u8,
+        to_level: u8,
+    },
     InvalidIncrease,
     InvalidSubstat {
         stat: Stat,
@@ -67,11 +71,76 @@ pub enum RelicOperationError {
 
 impl std::fmt::Display for RelicOperationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        f.write_str(&self.message())
     }
 }
 
 impl std::error::Error for RelicOperationError {}
+
+impl RelicOperationError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::TargetNotSelected => "target_not_selected",
+            Self::RelicNotFound { .. } => "relic_not_found",
+            Self::NoRelicSelected => "no_relic_selected",
+            Self::DifferentRelicSelected { .. } => "selection_changed",
+            Self::BudgetExhausted => "budget_exhausted",
+            Self::Discarded { .. } => "discarded",
+            Self::Locked { .. } => "locked",
+            Self::MaxLevel { .. } => "max_level",
+            Self::EquippedByOtherCharacter { .. } => "equipped_elsewhere",
+            Self::SetNotRecommendedForTarget { .. } => "set_not_recommended",
+            Self::StoppedForTarget { .. } => "stopped_for_target",
+            Self::HoldRequiresExplicitResume { .. } => "hold_requires_resume",
+            Self::StaleUpgradeResult { .. } => "stale_upgrade",
+            Self::InvalidLevelTransition { .. } => "invalid_level_transition",
+            Self::InvalidIncrease => "invalid_increase",
+            Self::InvalidSubstat { .. } => "invalid_substat",
+            Self::MainStatConflict { .. } => "main_stat_conflict",
+            Self::MustAddFourthSubstat => "must_add_fourth",
+            Self::MustUpgradeExistingSubstat => "must_upgrade_existing",
+            Self::InvalidSubstatCount { .. } => "invalid_substat_count",
+            Self::StatOverflow { .. } => "stat_overflow",
+            Self::EvaluationFailed(_) => "evaluation_failed",
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            Self::TargetNotSelected => "请先选择培养角色。".into(),
+            Self::RelicNotFound { relic_id } => format!("找不到遗器 {relic_id}。"),
+            Self::NoRelicSelected => "请先选择一件遗器。".into(),
+            Self::DifferentRelicSelected { .. } => "当前选择已改变，请核对遗器后再录入。".into(),
+            Self::BudgetExhausted => "本次强化预算已用完，可以重置 Demo 再试。".into(),
+            Self::Discarded { .. } => "这件遗器已标记弃置。".into(),
+            Self::Locked { .. } => "这件遗器已锁定，受到装备保护。".into(),
+            Self::MaxLevel { .. } => "这件遗器已经满级。".into(),
+            Self::EquippedByOtherCharacter { .. } => "这件遗器已装备在其他角色身上。".into(),
+            Self::SetNotRecommendedForTarget { .. } => {
+                "这件遗器的套装未列入当前角色的游戏静态推荐。".into()
+            }
+            Self::StoppedForTarget { .. } => "对当前角色已判定 Stop，请选择其他候选。".into(),
+            Self::HoldRequiresExplicitResume { .. } => {
+                "这件遗器处于 Hold，需要显式恢复后才能继续强化。".into()
+            }
+            Self::StaleUpgradeResult { .. } => {
+                "遗器等级已改变，这次过期、重复或非法跨级结果未被录入。".into()
+            }
+            Self::InvalidLevelTransition {
+                from_level,
+                to_level,
+            } => format!("一次观察只能强化 3 级，不能从 +{from_level} 直接记录为 +{to_level}。"),
+            Self::InvalidIncrease => "请输入大于 0 的有限增量。".into(),
+            Self::InvalidSubstat { .. } => "该属性不能作为副属性强化。".into(),
+            Self::MainStatConflict { .. } => "主属性不能同时作为副属性录入。".into(),
+            Self::MustAddFourthSubstat => "当前只有三条副属性，请录入新增的第四条副属性。".into(),
+            Self::MustUpgradeExistingSubstat => "已有四条副属性，只能增加其中一条。".into(),
+            Self::InvalidSubstatCount { .. } => "副属性数量不符合当前强化规则。".into(),
+            Self::StatOverflow { .. } => "增量过大，结果无法表示。".into(),
+            Self::EvaluationFailed(error) => format!("重新评价失败：{error}"),
+        }
+    }
+}
 
 impl From<Error> for RelicOperationError {
     fn from(error: Error) -> Self {
@@ -503,6 +572,16 @@ impl<E: Evaluator> DecisionEngine<E> {
         Ok(next)
     }
 
+    pub fn recommend_alternative(&mut self) -> Result<Option<UpgradeRecommendation>> {
+        let current = self.selected.clone();
+        let next = self
+            .rank_candidates()?
+            .into_iter()
+            .find(|candidate| Some(&candidate.relic_id) != current.as_ref());
+        self.selected = next.as_ref().map(|candidate| candidate.relic_id.clone());
+        Ok(next)
+    }
+
     /// Explicit selection resumes Hold; Stop is excluded for this target for this session.
     pub fn check_relic_selectable(&self, relic_id: &str) -> RelicOperationResult<()> {
         let goal = self.operation_goal()?;
@@ -543,6 +622,20 @@ impl<E: Evaluator> DecisionEngine<E> {
                 relic_id: relic_id.into(),
             })
         }
+    }
+
+    pub fn apply_upgrade_observation(
+        &mut self,
+        result: UpgradeResult,
+        resulting_level: u8,
+    ) -> RelicOperationResult<UpgradeOutcome> {
+        if result.expected_level.checked_add(3) != Some(resulting_level) {
+            return Err(RelicOperationError::InvalidLevelTransition {
+                from_level: result.expected_level,
+                to_level: resulting_level,
+            });
+        }
+        self.apply_upgrade(result)
     }
 
     /// Applies a single observed result transactionally. Validation/evaluator errors
